@@ -1,3 +1,8 @@
+@font-face{font-family:"Battambang";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/battambang-khmer-400-normal.woff2) format("woff2");unicode-range:U+1780-17FF,U+19E0-19FF,U+200C,U+25CC}
+@font-face{font-family:"Battambang";font-style:normal;font-weight:700;font-display:swap;src:url(fonts/battambang-khmer-700-normal.woff2) format("woff2");unicode-range:U+1780-17FF,U+19E0-19FF,U+200C,U+25CC}
+@font-face{font-family:"Battambang";font-style:normal;font-weight:900;font-display:swap;src:url(fonts/battambang-khmer-900-normal.woff2) format("woff2");unicode-range:U+1780-17FF,U+19E0-19FF,U+200C,U+25CC}
+@font-face{font-family:"Battambang";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/battambang-latin-400-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+2000-206F,U+20AC,U+2122}
+@font-face{font-family:"Battambang";font-style:normal;font-weight:700;font-display:swap;src:url(fonts/battambang-latin-700-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+2000-206F,U+20AC,U+2122}
 :root{color-scheme:dark;--bg:#0a0a0b;--t1:#fff;--t2:#8d8d92;--btn-bg:#17171a;--btn-bd:#2a2a2e;--btn-tx:#f2f2f2;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:light){:root:not([data-theme="dark"]){color-scheme:light;--bg:#f3f3f5;--t1:#111113;--t2:#6b6b72;--btn-bg:#fff;--btn-bd:#d4d4da;--btn-tx:#151517}}
 :root[data-theme="dark"]{color-scheme:dark;--bg:#0a0a0b;--t1:#fff;--t2:#8d8d92;--btn-bg:#17171a;--btn-bd:#2a2a2e;--btn-tx:#f2f2f2}

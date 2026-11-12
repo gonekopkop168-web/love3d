@@ -163,16 +163,20 @@ function pillGeo(w, h) {
 
 function createPills() {
   var m = document.createElement("canvas").getContext("2d");
-  var font = "700 " + (PH * 0.38 * PX) + "px Battambang, Outfit, sans-serif";
+  var font = "700 " + (PH * 0.38 * PX) + "px Battambang, 'Khmer Sangam MN', 'Noto Sans Khmer', Outfit, sans-serif";
   var count = Math.min(MESSAGES.length, 56);
   var list = MESSAGES.slice().sort(function () { return Math.random() - 0.5; }).slice(0, count);
   list.forEach(function (text, i) {
     m.font = font;
-    var w = Math.max(2.8, m.measureText(text).width / PX + 1.3);
+    /* iOS/Safari can under-measure Khmer: take the larger of advance width and glyph bounding box, then add a safety margin */
+    var mt = m.measureText(text);
+    var bb = (mt.actualBoundingBoxLeft || 0) + (mt.actualBoundingBoxRight || 0);
+    var tw = Math.max(mt.width, bb) * 1.08;
+    var w = Math.max(2.8, tw / PX + 1.3);
     var color = new THREE.Color(COLORS[Math.floor(Math.random() * COLORS.length)].toLowerCase());
     var light = (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) > 0.5;
     var cv = document.createElement("canvas"); cv.width = Math.ceil(w * PX); cv.height = Math.ceil(PH * PX);
-    var cx = cv.getContext("2d"); cx.font = font; cx.textAlign = "center"; cx.textBaseline = "middle";
+    var cx = cv.getContext("2d"); cx.font = font; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.direction = "ltr";
     cx.fillStyle = light ? "#101012" : "#ffffff"; cx.fillText(text, cv.width / 2, cv.height / 2 + 2);
     var tex = new THREE.CanvasTexture(cv); tex.anisotropy = 4;
     var group = new THREE.Group();
@@ -441,8 +445,9 @@ function start() { fit(); buildWalls(); createPills(); requestAnimationFrame(fra
 var started = false;
 function go() { if (!started) { started = true; start(); } }
 if (document.fonts && document.fonts.load) {
-  document.fonts.load("700 40px Battambang", "នី").then(go, go);
-  setTimeout(go, 1500);
+  var sample = MESSAGES.join(" ");
+  Promise.all([document.fonts.load("700 40px Battambang", sample), document.fonts.load("400 40px Battambang", "នី")]).then(function () { return document.fonts.ready; }).then(go, go);
+  setTimeout(go, 6000);
 } else go();
 })();
 
