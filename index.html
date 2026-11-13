@@ -3,23 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ពាក្យផ្អែមល្ហែមជូននី ❤️ (3D)</title>
-<link rel="preload" href="fonts/battambang-khmer-700-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css">
+<title>MangaKH — អានកំប្លែងខ្មែរ</title>
+<meta name="description" content="គេហទំព័រអានមង់ហ្គាភាសាខ្មែរ">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;500;700&family=Moul&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<div class="heading" id="heading">
-  <h1>សារផ្អែមល្ហែមជូននី ❤️</h1>
-  <p class="sub">គ្រប់ប្រអប់តូចៗ សុទ្ធតែមានពាក្យស្រឡាញ់ផ្ញើជូនអូននី 💗</p>
-</div>
-<canvas id="c"></canvas>
-<div class="controls" id="controls">
-  <button id="btnGravity" type="button">គ្មានទំនាញ</button>
-  <button id="btnExplode" type="button">បាចសារស្នេហ៍</button>
-</div>
-<button id="bgmBtn" type="button" aria-label="តន្ត្រី" style="position:fixed;left:clamp(16px,3vw,40px);bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:6;width:46px;height:46px;padding:0;border-radius:50%;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center">🔊</button>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
-<script src="script.js"></script>
+<header class="top" id="top">
+  <a href="#/" class="logo"><span>📖</span> MangaKH</a>
+  <div class="search"><input id="q" type="search" placeholder="ស្វែងរកមង់ហ្គា..." autocomplete="off"></div>
+  <button id="theme" class="icon" aria-label="ប្តូរពណ៌">🌙</button>
+</header>
+<main id="app"></main>
+<footer class="foot">© <span id="yr"></span> MangaKH · រក្សាសិទ្ធិគ្រប់យ៉ាង</footer>
+<button id="toTop" class="fab" aria-label="ឡើងលើ">↑</button>
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
