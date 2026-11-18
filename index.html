@@ -1,25 +1,84 @@
 <!DOCTYPE html>
-<html lang="km">
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MangaKH — អានកំប្លែងខ្មែរ</title>
-<meta name="description" content="គេហទំព័រអានមង់ហ្គាភាសាខ្មែរ">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;500;700&family=Moul&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Villa Explorer</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{"imports":{
+ "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+ "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
 </head>
 <body>
-<header class="top" id="top">
-  <a href="#/" class="logo"><span>📖</span> MangaKH</a>
-  <div class="search"><input id="q" type="search" placeholder="ស្វែងរកមង់ហ្គា..." autocomplete="off"></div>
-  <button id="theme" class="icon" aria-label="ប្តូរពណ៌">🌙</button>
-</header>
-<main id="app"></main>
-<footer class="foot">© <span id="yr"></span> MangaKH · រក្សាសិទ្ធិគ្រប់យ៉ាង</footer>
-<button id="toTop" class="fab" aria-label="ឡើងលើ">↑</button>
-<script src="js/data.js"></script>
-<script src="js/app.js"></script>
+<canvas id="c"></canvas>
+<div id="crosshair"></div>
+<div id="prompt">Press E to Open Door</div>
+<div id="help">WASD move · Mouse look · Space jump · Shift sprint · E door · C switch · F sit/sleep · V view · Esc pause</div>
+<div id="waterFx"></div>
+<button id="cookBtn">🍚 ដាំបាយ</button>
+<div id="topleft">
+  <button id="fs" title="Fullscreen">⛶</button>
+  <button id="switchBtn">🔁 Switch</button>
+  <button id="followBtn">តាមខ្ញុំ</button>
+  <button id="hugBtn">ឱប</button>
+  <button id="shopBtn">បើកហាង</button>
+  <div style="flex-basis:100%;height:0"></div>
+  <div id="money">💰 <span id="moneyAmt">$0.00</span></div>
+</div>
+<div id="toast"></div>
+<button id="settingsBtn" title="Settings">⚙</button>
+
+<div id="speed">0 km/h</div>
+<button id="sitBtn">🪑 Sit</button>
+<div id="sleepFade"><span>💤 Zzz…</span></div>
+
+<div id="settings">
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="row"><span>Camera view</span>
+      <div class="seg"><button id="camFps">First person</button><button id="camTps" class="on">Third person</button></div></div>
+    <label class="row"><span>Camera distance</span><input id="camDist" type="range" min="1.5" max="6" step="0.1" value="3"></label>
+    <label class="row"><span>Field of view</span><input id="fov" type="range" min="55" max="100" step="1" value="70"></label>
+    <label class="row"><span>Look sensitivity</span><input id="sens" type="range" min="0.4" max="2.5" step="0.1" value="1"></label>
+    <p class="hint">Third person shows your own character. Tip: press V to switch view quickly.</p>
+    <button id="closeSettings">Close</button>
+  </div>
+</div>
+
+<div id="menu">
+  <h1 id="mt">Villa Explorer</h1>
+  <p>Explore a modern two-floor luxury villa. Open doors, climb the stairs, visit every room.</p>
+  <table>
+    <tr><td>W A S D</td><td>Move</td></tr>
+    <tr><td>Mouse</td><td>Look around</td></tr>
+    <tr><td>Space</td><td>Jump</td></tr>
+    <tr><td>Shift</td><td>Sprint</td></tr>
+    <tr><td>E</td><td>Open / close door</td></tr>
+    <tr><td>C</td><td>Switch character</td></tr>
+    <tr><td>F</td><td>Sit / sleep / drive car / exit</td></tr>
+    <tr><td>W S A D</td><td>Driving: gas, brake, steer</td></tr>
+    <tr><td>Space / Shift</td><td>Driving: handbrake / boost</td></tr>
+    <tr><td>V</td><td>First / third person view</td></tr>
+    <tr><td>Click character</td><td>Stop &amp; talk (click again = back to AI)</td></tr>
+    <tr><td>G</td><td>តាមខ្ញុំ — make them follow you</td></tr>
+    <tr><td>H</td><td>ឱប — hug for 5 seconds</td></tr>
+    <tr><td>Pool</td><td>Walk in to swim · look down to dive · Jump at the edge to climb out</td></tr>
+    <tr><td>R</td><td>ដាំបាយ / ដាំស្ល — cook rice or soup at the kitchen stove</td></tr>
+    <tr><td>O</td><td>បើកហាង — open the coffee shop (behind the counter)</td></tr>
+    <tr><td>Esc</td><td>Pause</td></tr>
+  </table>
+  <button id="play">Start Game</button>
+</div>
+
+<div id="mobile">
+  <div id="joy"><div id="knob"></div></div>
+  <button id="pauseBtn">II</button>
+  <button id="jumpBtn">Jump</button>
+  <button id="useBtn">Use</button>
+</div>
+
+<script type="module" src="game.js"></script>
 </body>
 </html>
