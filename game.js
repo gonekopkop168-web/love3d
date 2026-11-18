@@ -823,7 +823,7 @@ let camMode = 'tps', camDist = 3, lookSens = 1;
 const eyePos = new THREE.Vector3(P.x, EYE, P.z);   // real eye position (first-person point)
 function applyView() {
   me.group.visible = camMode === 'tps' && (!driving || dv.bike);
-  heldFP.visible = (!!held || !!eating || !!drink) && camMode === 'fps' && !driving && !swimming;              // your own body is only shown in third person
+  heldFP.visible = (!!held || !!eating || !!drink || baby.state === 'held') && camMode === 'fps' && !driving && !swimming;              // your own body is only shown in third person
   if (camMode !== 'tps') { camera.position.copy(eyePos); return; }
   const th = camera.rotation.y, ph = camera.rotation.x;
   const fx = -Math.sin(th) * Math.cos(ph), fy = Math.sin(ph), fz = -Math.cos(th) * Math.cos(ph);
@@ -1429,8 +1429,72 @@ function makeCan(col) {
   const w = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.031, 0.04, 12), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })); w.position.y = 0.06; g.add(w);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; }); return g;
 }
+/* ================= NEWBORN BABY on the blue bed: tiny wiggling hands and feet, can be carried and put back on any bed ================= */
+function makeBaby() {
+  const group = new THREE.Group(), SK = M(0xf4c7a1, 0.7), ON = M(0xfff0b3, 0.9), DK = M(0x2b1d14, 0.8), PK = M(0xf29aa0, 0.7);
+  const add = (par, geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; par.add(m); return m; };
+  const torso = add(group, new THREE.CapsuleGeometry(0.075, 0.13, 4, 10), ON, 0, 0.078, -0.03); torso.rotation.x = Math.PI / 2;
+  const head = new THREE.Group(); head.position.set(0, 0.09, 0.17); group.add(head);
+  add(head, new THREE.SphereGeometry(0.09, 16, 12), SK, 0, 0, 0).scale.set(1, 0.95, 1.05);
+  add(head, new THREE.SphereGeometry(0.05, 10, 8), DK, 0, 0.02, 0.075).scale.set(1.2, 0.45, 0.8);                 // a little hair on the crown
+  for (const sx of [-1, 1]) {
+    add(head, new THREE.SphereGeometry(0.018, 8, 6), SK, sx * 0.088, 0, -0.01);                                     // ears
+    const eye = add(head, new THREE.BoxGeometry(0.032, 0.005, 0.007), DK, sx * 0.032, 0.083, 0.03); eye.rotation.z = sx * 0.18;   // closed, sleepy eyes
+    add(head, new THREE.SphereGeometry(0.02, 8, 6), PK, sx * 0.052, 0.074, -0.012).scale.set(1, 0.4, 0.8);           // rosy cheeks
+  }
+  add(head, new THREE.SphereGeometry(0.011, 8, 6), SK, 0, 0.09, -0.005);                                             // nose
+  add(head, new THREE.BoxGeometry(0.03, 0.005, 0.01), PK, 0, 0.087, -0.04);                                          // mouth
+  const arms = [], legs = [];
+  for (const sx of [-1, 1]) {
+    const a = new THREE.Group(); a.position.set(sx * 0.1, 0.115, 0.06); group.add(a);
+    const up = add(a, new THREE.CylinderGeometry(0.02, 0.024, 0.085, 8), ON, 0, 0, -0.042); up.rotation.x = Math.PI / 2;
+    add(a, new THREE.SphereGeometry(0.03, 8, 6), SK, 0, 0, -0.09);                                                    // tiny fist
+    a.userData = { sx, ph: sx > 0 ? 0 : 1.7 }; arms.push(a);
+    const l = new THREE.Group(); l.position.set(sx * 0.045, 0.062, -0.11); group.add(l);
+    const th = add(l, new THREE.CylinderGeometry(0.03, 0.026, 0.1, 8), ON, 0, 0, -0.05); th.rotation.x = Math.PI / 2;
+    add(l, new THREE.SphereGeometry(0.032, 8, 6), SK, 0, 0, -0.112);                                                  // foot
+    l.userData = { sx, ph: sx > 0 ? 0.9 : 2.6 }; legs.push(l);
+  }
+  return { group, torso, head, arms, legs };
+}
+const baby = { state: 'bed', bed: null, grp: makeBaby(), tp: makeBaby(), fp: makeBaby(), t: 0 };
+scene.add(baby.grp.group);
+baby.tp.group.position.set(-0.02, 1.16, 0.34); baby.tp.group.rotation.y = Math.PI / 2; baby.tp.group.scale.setScalar(1.1);   // cradled across the chest (third person)
+baby.fp.group.position.set(-0.22, -0.13, 0); baby.fp.group.rotation.y = Math.PI / 2; baby.fp.group.scale.setScalar(1.35);      // in front of the camera (first person)
+const babyHand = new THREE.Object3D();                       // invisible "held item" that raises the carrying arm
+function placeBaby(s) {
+  baby.bed = s; baby.state = 'bed'; const g = baby.grp.group;
+  g.position.set(s.px + s.hd * 0.35, s.by + 0.69, s.pz); g.rotation.y = s.hd > 0 ? Math.PI / 2 : -Math.PI / 2; g.visible = true;
+  refreshHeld();
+}
+placeBaby(spots.find(s => s.node === 'B3') || spots.find(s => s.type === 'sleep'));
+const babyOk = () => !(driving || seat || hug || swimming || buyOpen || phoneOpen);
+const nearBaby = () => { if (baby.state !== 'bed' || !babyOk()) return false; const p = baby.grp.group.position; return Math.hypot(P.x - p.x, P.z - p.z) < 1.9 && Math.abs(P.y - baby.bed.by) < 1.3; };
+const bedForBaby = () => baby.state === 'held' && babyOk() ? spots.find(s => s.type === 'sleep' && Math.hypot(P.x - s.px, P.z - s.pz) < 2.4 && Math.abs(P.y - s.by) < 1.3) : null;
+function babyAction() {
+  if (nearBaby()) { baby.state = 'held'; baby.grp.group.visible = false; refreshHeld(); toast('👶 បីកូនហើយ ❤️'); return true; }
+  const b = bedForBaby(); if (b) { placeBaby(b); toast('🛏 ដាក់កូនលើគ្រែហើយ 😴'); return true; }
+  return false;
+}
+const babyBtn = document.createElement('button'); babyBtn.id = 'babyBtn'; document.body.appendChild(babyBtn);
+babyBtn.onclick = e => { babyAction(); e.currentTarget.blur(); };
+addEventListener('keydown', e => { if (e.code === 'KeyK' && running) babyAction(); });
+function babyStep(dt) {
+  baby.t += dt; const t = baby.t;
+  const anim = B => {
+    B.torso.scale.set(1 + Math.sin(t * 2.2) * 0.03, 1, 1 + Math.sin(t * 2.2) * 0.03); B.head.rotation.z = Math.sin(t * 0.7) * 0.06;
+    for (const a of B.arms) { const { sx, ph } = a.userData; a.rotation.y = sx * (0.35 + Math.sin(t * 1.7 + ph) * 0.22); a.rotation.x = Math.sin(t * 1.3 + ph) * 0.3; }
+    for (const l of B.legs) { const { sx, ph } = l.userData; l.rotation.x = Math.sin(t * 2.0 + ph) * 0.24; l.rotation.y = sx * (0.22 + Math.sin(t * 1.5 + ph) * 0.12); }
+  };
+  if (baby.state === 'bed') anim(baby.grp); else { anim(baby.tp); anim(baby.fp); }
+  const nb = nearBaby(), bd = bedForBaby(), show = nb || !!bd;
+  babyBtn.classList.toggle('show', show);
+  if (show) babyBtn.textContent = (nb ? '👶 បីកូន' : '🛏 ដាក់កូនលើគ្រែ') + (mobile ? '' : ' [K]');
+}
 function refreshHeld() { // show the carried bowl on the controlled character (third person) and in front of the camera (first person)
   boy.setHold(null); girl.setHold(null); heldFP.clear(); heldFP.position.set(0.24, -0.3, -0.55); heldFP.rotation.set(0, 0, 0);
+  baby.tp.group.removeFromParent();
+  if (baby.state === 'held') { me.group.add(baby.tp.group); me.setHold(babyHand); heldFP.add(baby.fp.group); return; }   // carrying the baby
   if (drink && !held) { me.setHold(makeCan(drink.col)); const c = makeCan(drink.col); c.scale.setScalar(2); heldFP.add(c); return; }
   if (!held) return;
   me.setHold(makeBowl(held.kind));
@@ -1569,7 +1633,7 @@ function joyMove(t) {
 joyEl.addEventListener('touchstart', e => { e.preventDefault(); joyId = e.changedTouches[0].identifier; joyMove(e.changedTouches[0]); }, { passive: false });
 document.addEventListener('touchstart', e => {
   if (!mobile || !running) return;
-  for (const t of e.changedTouches) if (lookId === null && !t.target.closest('#mobile,#switchBtn,#sitBtn,#cookBtn,#topleft,#settingsBtn,#settings,#buyBtn,#fuelBtn,#buyPanel,#phoneBtn,#phone')) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; tap = { x: t.clientX, y: t.clientY, t: performance.now() }; }
+  for (const t of e.changedTouches) if (lookId === null && !t.target.closest('#mobile,#switchBtn,#sitBtn,#cookBtn,#topleft,#settingsBtn,#settings,#buyBtn,#fuelBtn,#babyBtn,#buyPanel,#phoneBtn,#phone')) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; tap = { x: t.clientX, y: t.clientY, t: performance.now() }; }
 }, { passive: false });
 document.addEventListener('touchmove', e => {
   if (!e.target.closest('#settings,#menu,#buyPanel,#phone')) e.preventDefault();  // allow scrolling inside menus
@@ -1675,7 +1739,7 @@ function update(dt) {
     d.col.on = d.ang < 0.8;
   }
   eyePos.copy(camera.position);
-  girl.update(dt); boy.update(dt); shopStep(dt); aiDriveStep(dt); pcStep(dt); fridgeStep(dt); fuelStep(dt); poolStep(dt); cookStep(dt); eatingStep(dt);
+  girl.update(dt); boy.update(dt); babyStep(dt); shopStep(dt); aiDriveStep(dt); pcStep(dt); fridgeStep(dt); fuelStep(dt); poolStep(dt); cookStep(dt); eatingStep(dt);
   me.drive(dt, { x: P.x, y: P.y, z: P.z, vx, vz, seat: driving && dv.bike ? bikeSeat : seat, yaw: camera.rotation.y, swim: swimming, swimY: P.y + EYE - 0.4, eating: !!eating, hug: hug && { ang: hug.ang, e: Math.max(0, Math.min(1, hug.t / .6, (5 - hug.t) / .4)) } });
   const nc = nearVeh(), ns = driving || nc || seat || nearSpot(), sb = $('sitBtn');
   sb.classList.toggle('show', !!ns);
