@@ -3,6 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { createCharacter } from './npc.js';
 import bannerData from './banner-data.js';
 import { AVATARS } from './avatars.js';
+import cryData from './cry-data.js';
 const avatarOf = n => n === 'Ny Ny' ? AVATARS.nyny : n === 'G1 G1' ? AVATARS.g1 : null;
 const avImg = (n, c = '') => { const a = avatarOf(n); return a ? `<img class="pav ${c}" src="${a}" alt="">` : '<i>🧑</i>'; };
 
@@ -165,8 +166,26 @@ function bath(by) {
   box(8.4, by, -2.2, 0.04, 2, 1.6, GLASS, true, false); box(8.9, by, -1.4, 1.0, 2, 0.04, GLASS, true, false);
   box(9.8, by + 2.0, -2.6, 0.3, 0.04, 0.3, METAL, false);
 }
+const cribs = [];     // baby cots: placement spots for the baby (one per guest room)
+let _cribTex = null;
+function crib(cx, cz, by) {       // white wooden cot with a lavender mattress, slatted sides and solid rounded ends (on little wheels)
+  if (!_cribTex) { const c = document.createElement('canvas'); c.width = 256; c.height = 128; const x = c.getContext('2d'); x.fillStyle = '#e6d6f2'; x.fillRect(0, 0, 256, 128);
+    for (let i = 0; i < 26; i++) { x.fillStyle = `hsla(${255 + Math.random() * 50},55%,${68 + Math.random() * 14}%,.35)`; x.fillRect(0, Math.random() * 128, 256, 4 + Math.random() * 16); }
+    _cribTex = new THREE.CanvasTexture(c); _cribTex.colorSpace = THREE.SRGBColorSpace; }
+  const WT = 0xf6f5f1, L = 1.3, W = 0.7;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(cx + sx * (L / 2 - 0.05), by, cz + sz * (W / 2 - 0.05), 0.07, 0.07, 0.07, 0x9a9a96, false);   // wheels
+  box(cx, by + 0.3, cz, L - 0.1, 0.04, W - 0.1, WT, false);                                                                     // base (mattress board, half way up the cot)
+  box(cx, by + 0.34, cz, L - 0.16, 0.14, W - 0.14, new THREE.MeshStandardMaterial({ map: _cribTex, roughness: 0.95 }), false);   // mattress
+  for (const sx of [-1, 1]) { box(cx + sx * (L / 2 - 0.025), by + 0.06, cz, 0.05, 0.84, W, WT, false); box(cx + sx * (L / 2 - 0.025), by + 0.9, cz, 0.05, 0.04, W - 0.1, WT, false); }   // solid ends
+  for (const sz of [-1, 1]) {
+    box(cx, by + 0.74, cz + sz * (W / 2 - 0.02), L - 0.1, 0.04, 0.04, WT, false); box(cx, by + 0.2, cz + sz * (W / 2 - 0.02), L - 0.1, 0.04, 0.04, WT, false);   // top + bottom rails
+    for (let i = 0; i < 15; i++) box(cx - (L - 0.2) / 2 + i * ((L - 0.2) / 14), by + 0.24, cz + sz * (W / 2 - 0.02), 0.025, 0.5, 0.025, WT, false);               // slats
+  }
+  blk(cx, cz, L, W, by, by + 0.9);
+  cribs.push({ type: 'crib', px: cx, pz: cz, by, hd: 1, top: 0.49, r: 2.0 });
+}
 function guestRoom(by, sx = 0) {
-  bed(3.3, -3.5, by, 1); wardrobe(0.55, -5.5, 0.8, 1.6, by);
+  bed(3.3, -3.5, by, 1); crib(3.3, -5.4, by); wardrobe(0.55, -5.5, 0.8, 1.6, by); table(1.9, -5.45, 0.55, 0.55, by, 0.55);   // wooden bedside table (the teddy bear sits on it)
   box(3.3, by, -1.2, 1.6, .01, .8, 0xc9b79c, false, false);
 }
 
@@ -823,7 +842,7 @@ let camMode = 'tps', camDist = 3, lookSens = 1;
 const eyePos = new THREE.Vector3(P.x, EYE, P.z);   // real eye position (first-person point)
 function applyView() {
   me.group.visible = camMode === 'tps' && (!driving || dv.bike);
-  heldFP.visible = (!!held || !!eating || !!drink || baby.state === 'held') && camMode === 'fps' && !driving && !swimming;              // your own body is only shown in third person
+  heldFP.visible = (!!held || !!eating || !!drink || baby.state === 'held' || bottle.state === 'held') && camMode === 'fps' && !driving && !swimming;              // your own body is only shown in third person
   if (camMode !== 'tps') { camera.position.copy(eyePos); return; }
   const th = camera.rotation.y, ph = camera.rotation.x;
   const fx = -Math.sin(th) * Math.cos(ph), fy = Math.sin(ph), fz = -Math.cos(th) * Math.cos(ph);
@@ -1434,16 +1453,16 @@ function makeBaby() {
   const group = new THREE.Group(), SK = M(0xf4c7a1, 0.7), ON = M(0xfff0b3, 0.9), DK = M(0x2b1d14, 0.8), PK = M(0xf29aa0, 0.7);
   const add = (par, geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; par.add(m); return m; };
   const torso = add(group, new THREE.CapsuleGeometry(0.075, 0.13, 4, 10), ON, 0, 0.078, -0.03); torso.rotation.x = Math.PI / 2;
-  const head = new THREE.Group(); head.position.set(0, 0.09, 0.17); group.add(head);
+  const head = new THREE.Group(); head.position.set(0, 0.09, 0.17); group.add(head); const eyes = [];
   add(head, new THREE.SphereGeometry(0.09, 16, 12), SK, 0, 0, 0).scale.set(1, 0.95, 1.05);
   add(head, new THREE.SphereGeometry(0.05, 10, 8), DK, 0, 0.02, 0.075).scale.set(1.2, 0.45, 0.8);                 // a little hair on the crown
   for (const sx of [-1, 1]) {
     add(head, new THREE.SphereGeometry(0.018, 8, 6), SK, sx * 0.088, 0, -0.01);                                     // ears
-    const eye = add(head, new THREE.BoxGeometry(0.032, 0.005, 0.007), DK, sx * 0.032, 0.083, 0.03); eye.rotation.z = sx * 0.18;   // closed, sleepy eyes
+    const eye = add(head, new THREE.BoxGeometry(0.032, 0.005, 0.007), DK, sx * 0.032, 0.083, 0.03); eye.rotation.z = sx * 0.18; eyes.push(eye);   // closed, sleepy eyes
     add(head, new THREE.SphereGeometry(0.02, 8, 6), PK, sx * 0.052, 0.074, -0.012).scale.set(1, 0.4, 0.8);           // rosy cheeks
   }
   add(head, new THREE.SphereGeometry(0.011, 8, 6), SK, 0, 0.09, -0.005);                                             // nose
-  add(head, new THREE.BoxGeometry(0.03, 0.005, 0.01), PK, 0, 0.087, -0.04);                                          // mouth
+  const mouth = add(head, new THREE.BoxGeometry(0.03, 0.005, 0.01), M(0xd9626b, 0.7), 0, 0.087, -0.04);              // mouth
   const arms = [], legs = [];
   for (const sx of [-1, 1]) {
     const a = new THREE.Group(); a.position.set(sx * 0.1, 0.115, 0.06); group.add(a);
@@ -1455,7 +1474,22 @@ function makeBaby() {
     add(l, new THREE.SphereGeometry(0.032, 8, 6), SK, 0, 0, -0.112);                                                  // foot
     l.userData = { sx, ph: sx > 0 ? 0.9 : 2.6 }; legs.push(l);
   }
-  return { group, torso, head, arms, legs };
+  const bubble = new THREE.Sprite(new THREE.SpriteMaterial({ map: babyBubbleTex(), transparent: true, depthTest: false })); bubble.scale.set(0.34, 0.34, 1); bubble.position.set(0, 0.52, 0.1); bubble.visible = false; bubble.renderOrder = 5; group.add(bubble);   // "hungry!" speech bubble
+  const bubble2 = new THREE.Sprite(new THREE.SpriteMaterial({ map: babyToyTex(), transparent: true, depthTest: false })); bubble2.scale.set(0.34, 0.34, 1); bubble2.position.set(0, 0.52, 0.1); bubble2.visible = false; bubble2.renderOrder = 5; group.add(bubble2);   // "wants to play" bubble
+  return { group, torso, head, arms, legs, mouth, eyes, bubble, bubble2 };
+}
+let _bbt = null, _btt = null;
+function babyToyTex() {
+  if (_btt) return _btt; const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  x.fillStyle = '#ffffff'; x.strokeStyle = '#e0a020'; x.lineWidth = 6; x.beginPath(); x.arc(64, 58, 50, 0, Math.PI * 2); x.fill(); x.stroke();
+  x.beginPath(); x.moveTo(52, 104); x.lineTo(64, 124); x.lineTo(78, 104); x.fill(); x.font = '56px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('🧸', 64, 62);
+  _btt = new THREE.CanvasTexture(c); _btt.colorSpace = THREE.SRGBColorSpace; return _btt;
+}
+function babyBubbleTex() {
+  if (_bbt) return _bbt; const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  x.fillStyle = '#ffffff'; x.strokeStyle = '#e0457b'; x.lineWidth = 6; x.beginPath(); x.arc(64, 58, 50, 0, Math.PI * 2); x.fill(); x.stroke();
+  x.beginPath(); x.moveTo(52, 104); x.lineTo(64, 124); x.lineTo(78, 104); x.fill(); x.font = '56px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('🍼', 64, 62);
+  _bbt = new THREE.CanvasTexture(c); _bbt.colorSpace = THREE.SRGBColorSpace; return _bbt;
 }
 const baby = { state: 'bed', bed: null, grp: makeBaby(), tp: makeBaby(), fp: makeBaby(), t: 0 };
 scene.add(baby.grp.group);
@@ -1464,37 +1498,191 @@ baby.fp.group.position.set(-0.22, -0.13, 0); baby.fp.group.rotation.y = Math.PI 
 const babyHand = new THREE.Object3D();                       // invisible "held item" that raises the carrying arm
 function placeBaby(s) {
   baby.bed = s; baby.state = 'bed'; const g = baby.grp.group;
-  g.position.set(s.px + s.hd * 0.35, s.by + 0.69, s.pz); g.rotation.y = s.hd > 0 ? Math.PI / 2 : -Math.PI / 2; g.visible = true;
+  if (s.type === 'crib') g.position.set(s.px, s.by + s.top, s.pz); else g.position.set(s.px + s.hd * 0.35, s.by + 0.69, s.pz);
+  g.rotation.y = s.hd > 0 ? Math.PI / 2 : -Math.PI / 2; g.visible = true;
   refreshHeld();
 }
-placeBaby(spots.find(s => s.node === 'B3') || spots.find(s => s.type === 'sleep'));
-const babyOk = () => !(driving || seat || hug || swimming || buyOpen || phoneOpen);
+const babyOk = () => !(driving || seat || hug || swimming || buyOpen || phoneOpen || feed || play);
 const nearBaby = () => { if (baby.state !== 'bed' || !babyOk()) return false; const p = baby.grp.group.position; return Math.hypot(P.x - p.x, P.z - p.z) < 1.9 && Math.abs(P.y - baby.bed.by) < 1.3; };
-const bedForBaby = () => baby.state === 'held' && babyOk() ? spots.find(s => s.type === 'sleep' && Math.hypot(P.x - s.px, P.z - s.pz) < 2.4 && Math.abs(P.y - s.by) < 1.3) : null;
+const bedForBaby = () => baby.state === 'held' && babyOk() ? [...cribs, ...spots.filter(s => s.type === 'sleep')].find(s => Math.hypot(P.x - s.px, P.z - s.pz) < (s.type === 'crib' ? 2.0 : 2.4) && Math.abs(P.y - s.by) < 1.3) : null;
 function babyAction() {
   if (nearBaby()) { baby.state = 'held'; baby.grp.group.visible = false; refreshHeld(); toast('👶 បីកូនហើយ ❤️'); return true; }
-  const b = bedForBaby(); if (b) { placeBaby(b); toast('🛏 ដាក់កូនលើគ្រែហើយ 😴'); return true; }
+  const b = bedForBaby(); if (b) { placeBaby(b); toast(b.type === 'crib' ? '🛏 ដាក់កូនក្នុងគ្រែតូចហើយ 😴' : '🛏 ដាក់កូនលើគ្រែហើយ 😴'); return true; }
   return false;
 }
 const babyBtn = document.createElement('button'); babyBtn.id = 'babyBtn'; document.body.appendChild(babyBtn);
 babyBtn.onclick = e => { babyAction(); e.currentTarget.blur(); };
 addEventListener('keydown', e => { if (e.code === 'KeyK' && running) babyAction(); });
+/* ---- milk bottle in the kitchen: the baby gets hungry at random, carry the bottle to the baby to feed it ---- */
+function makeBottle() {            // origin at the base of the bottle, nipple pointing up (about 0.22 m tall)
+  const g = new THREE.Group(), GL = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.15, transparent: true, opacity: 0.32 }), WT = M(0xf4f4ee, 0.5), CL = new THREE.MeshStandardMaterial({ color: 0xe8f4ff, roughness: 0.1, transparent: true, opacity: 0.55 });
+  const add = (geo, mat, y, x = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; };
+  add(new THREE.CylinderGeometry(0.034, 0.034, 0.13, 14), GL, 0.065);
+  const mg = new THREE.CylinderGeometry(0.031, 0.031, 0.115, 14); mg.translate(0, 0.0575, 0); const milk = add(mg, M(0xfffaf0, 0.6), 0.008); g.userData.milk = milk;     // the milk (scaled as it is drunk)
+  for (let k = 0; k < 4; k++) add(new THREE.BoxGeometry(k % 2 ? 0.012 : 0.02, 0.003, 0.004), new THREE.MeshBasicMaterial({ color: 0xf2c200 }), 0.03 + k * 0.025, 0, 0.0345);   // measuring marks
+  add(new THREE.CylinderGeometry(0.04, 0.04, 0.02, 14), WT, 0.14); add(new THREE.CylinderGeometry(0.03, 0.038, 0.016, 14), WT, 0.158);
+  add(new THREE.CylinderGeometry(0.009, 0.015, 0.035, 10), CL, 0.184); add(new THREE.SphereGeometry(0.0115, 10, 8), CL, 0.204);                                          // clear nipple
+  return g;
+}
+const BOTTLE_H = 0.215, BOTTLE_HOME = { x: -9.45, y: 0.95, z: -4.9 };
+const bottle = { state: 'home', model: makeBottle() };       // 'home' (on the kitchen counter) | 'held' | 'feeding'
+bottle.model.position.set(BOTTLE_HOME.x, BOTTLE_HOME.y, BOTTLE_HOME.z); scene.add(bottle.model);
+baby.hungry = false; baby.nextH = 45 + Math.random() * 75; baby.cryT = 0;
+/* ---- teddy bear on the wooden bedside table: the baby sometimes wants to play, bring it the bear ---- */
+function makeBear() {              // fluffy brown teddy sitting, origin at its bottom, faces +z, about 0.24 m tall
+  const g = new THREE.Group(), FUR = M(0xb5651d, 0.95), CR = M(0xf3e2c4, 0.9), DK = M(0x4a2a12, 0.6), EY = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.2 });
+  const add = (geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.castShadow = true; g.add(m); return m; };
+  const S = r => new THREE.SphereGeometry(r, 14, 10);
+  add(S(0.07), FUR, 0, 0.07, 0, 1, 1.05, 0.95);                                   // body
+  add(S(0.045), CR, 0, 0.07, 0.045, 1, 1.1, 0.5);                                 // belly
+  add(S(0.058), FUR, 0, 0.17, 0.005);                                             // head
+  for (const sx of [-1, 1]) {
+    add(S(0.024), FUR, sx * 0.045, 0.22, 0, 1, 1, 0.7); add(S(0.012), CR, sx * 0.045, 0.22, 0.012, 1, 1, 0.5);   // ears
+    add(S(0.013), EY, sx * 0.022, 0.185, 0.052);                                   // eyes
+    add(S(0.024), FUR, sx * 0.085, 0.095, 0.02, 0.8, 1.4, 0.8).rotation.z = sx * 0.5;   // arms
+    add(S(0.028), FUR, sx * 0.045, 0.02, 0.05, 1, 0.8, 1.4);                       // legs
+    add(S(0.026), CR, sx * 0.045, 0.02, 0.075, 1, 0.8, 0.8);                       // foot pads
+  }
+  add(S(0.026), CR, 0, 0.16, 0.05, 1, 0.85, 0.9); add(S(0.011), DK, 0, 0.168, 0.071);   // muzzle + nose
+  const rb = add(new THREE.TorusGeometry(0.04, 0.006, 6, 16), M(0xd8423c, 0.5), 0, 0.118, 0.006); rb.rotation.x = Math.PI / 2;   // red neck ribbon
+  return g;
+}
+const BEAR_HOME = { x: 1.9, y: U + 0.55, z: -5.45 };
+const bear = { state: 'home', model: makeBear() };            // 'home' (on the bedside table) | 'held' | 'playing'
+bear.model.position.set(BEAR_HOME.x, BEAR_HOME.y, BEAR_HOME.z); bear.model.rotation.y = 0.35; scene.add(bear.model);
+baby.wantP = false; baby.nextP = 25 + Math.random() * 60;
+let feed = null, play = null;
+placeBaby(cribs.find(c => c.by > 1) || spots.find(s => s.node === 'B3') || spots.find(s => s.type === 'sleep'));   // put the baby on its bed (after the bottle exists, because refreshHeld looks at both)
+const handsFree = () => !held && !drink && !eating && baby.state !== 'held' && bear.state !== 'held';
+const nearBear = () => !driving && !seat && !swimming && Math.abs(P.y - U) < 1.3 && Math.hypot(P.x - BEAR_HOME.x, P.z - BEAR_HOME.z) < 1.8;
+const nearHome = () => !driving && !seat && !swimming && Math.abs(P.y) < 1 && Math.hypot(P.x - BOTTLE_HOME.x, P.z - BOTTLE_HOME.z) < 1.7;
+const babyReach = () => baby.state === 'held' || (baby.state === 'bed' && Math.hypot(P.x - baby.grp.group.position.x, P.z - baby.grp.group.position.z) < 2.2 && Math.abs(P.y - baby.bed.by) < 1.3);
+// Baby crying: the supplied clip loops while the baby is hungry; its volume follows the distance to the baby
+const cry = { buf: null, loading: false, src: null, gain: null };
+function cryLoad() {
+  if (cry.buf || cry.loading) return; cry.loading = true;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    fetch(cryData).then(r => r.arrayBuffer()).then(ab => actx.decodeAudioData(ab)).then(b => { cry.buf = b; }).catch(() => { cry.loading = false; });
+  } catch (e) { cry.loading = false; }
+}
+function cryStop() { if (cry.src) { try { cry.src.stop(); } catch (e) {} cry.src.disconnect(); cry.src = null; } }
+function cryUpdate(on, dist) {
+  if (!on) { cryStop(); return; }
+  cryLoad();
+  if (!cry.buf || !actx) return;
+  try {
+    if (actx.state === 'suspended') actx.resume();
+    const vol = Math.pow(Math.max(0, 1 - dist / 40), 2);       // full volume beside the cot, silent beyond 40 m
+    if (!cry.src) {
+      cry.gain = cry.gain || actx.createGain(); cry.gain.connect(actx.destination);
+      cry.src = actx.createBufferSource(); cry.src.buffer = cry.buf; cry.src.loop = true; cry.src.connect(cry.gain); cry.src.start();
+    }
+    cry.gain.gain.setTargetAtTime(vol, actx.currentTime, 0.1);
+  } catch (e) { /* no audio */ }
+}
+function startFeed() {
+  const hs = [], onBed = baby.state === 'bed', targets = onBed ? [baby.grp.group] : [baby.tp.group, baby.fp.group];
+  for (const tg of targets) { const h = new THREE.Group(), m = makeBottle(); m.position.y = -BOTTLE_H; h.add(m); h.position.set(0, 0.178, 0.125); h.rotation.x = 2.215; tg.add(h); hs.push([h, m.userData.milk]); }   // nipple at the baby's mouth
+  feed = { t: 0, dur: 6, hs }; bottle.state = 'feeding'; refreshHeld(); toast('🍼 កូនកំពុងបៅ... ❤️');
+}
+function endFeed(ok) {
+  if (!feed) return; feed.hs.forEach(([h]) => h.removeFromParent()); feed = null;
+  if (ok) { baby.hungry = false; baby.nextH = 80 + Math.random() * 120; bottle.state = 'home'; bottle.model.visible = true; toast('😊 កូនឆ្អែតហើយ! ដបត្រឡប់ទៅផ្ទះបាយវិញ'); }
+  else { bottle.state = 'held'; toast('🍼 ឈប់បៅ'); }
+  refreshHeld();
+}
+function bottleAction() {
+  if (!babyOk()) return false;
+  if (bottle.state === 'held') {
+    if (babyReach()) { if (!baby.hungry) { toast('👶 កូនមិនទាន់ឃ្លានទេ 😴'); return true; } startFeed(); return true; }
+    if (nearHome()) { bottle.state = 'home'; bottle.model.visible = true; refreshHeld(); toast('🍼 ដាក់ដបវិញហើយ'); return true; }
+    return false;
+  }
+  if (bottle.state === 'home' && nearHome() && handsFree()) { bottle.state = 'held'; bottle.model.visible = false; refreshHeld(); toast('🍼 យកដបទឹកដោះគោហើយ ' + (baby.hungry ? '— ទៅឲ្យកូនបៅ!' : '')); return true; }
+  return false;
+}
+function startPlay() {
+  const bs = [], g = baby.grp.group;
+  const b = makeBear(); b.scale.setScalar(0.6); b.position.set(0, 0.15, 0.03); g.add(b); bs.push(b);
+  play = { t: 0, dur: 8, bs }; bear.state = 'playing'; refreshHeld(); toast('🧸 កូនកំពុងលេងតុក្កតា... 😄');
+}
+function endPlay(ok) {
+  if (!play) return; play.bs.forEach(b => b.removeFromParent()); play = null;
+  if (ok) { baby.wantP = false; baby.nextP = 60 + Math.random() * 120; bear.state = 'home'; bear.model.visible = true; toast('😄 កូនសប្បាយហើយ! តុក្កតាត្រឡប់ទៅលើតុវិញ'); }
+  else { bear.state = 'held'; toast('🧸 ឈប់លេង'); }
+  refreshHeld();
+}
+function bearAction() {
+  if (!babyOk()) return false;
+  if (bear.state === 'held') {
+    if (babyReach() && baby.state === 'bed') {
+      if (baby.hungry) { toast('👶 កូនឃ្លាន! ឲ្យទឹកដោះគោសិន 🍼'); return true; }
+      if (!baby.wantP) { toast('👶 កូនមិនទាន់ចង់លេងទេ 😴'); return true; }
+      startPlay(); return true;
+    }
+    if (nearBear()) { bear.state = 'home'; bear.model.visible = true; refreshHeld(); toast('🧸 ដាក់តុក្កតាវិញហើយ'); return true; }
+    return false;
+  }
+  if (bear.state === 'home' && nearBear() && handsFree() && bottle.state !== 'held') { bear.state = 'held'; bear.model.visible = false; refreshHeld(); toast('🧸 យកតុក្កតាហើយ ' + (baby.wantP ? '— ទៅឲ្យកូនលេង!' : '')); return true; }
+  return false;
+}
+const bearBtn = document.createElement('button'); bearBtn.id = 'bearBtn'; document.body.appendChild(bearBtn);
+bearBtn.onclick = e => { bearAction(); e.currentTarget.blur(); };
+addEventListener('keydown', e => { if (e.code === 'KeyJ' && running) bearAction(); });
+const bottleBtn = document.createElement('button'); bottleBtn.id = 'bottleBtn'; document.body.appendChild(bottleBtn);
+bottleBtn.onclick = e => { bottleAction(); e.currentTarget.blur(); };
+addEventListener('keydown', e => { if (e.code === 'KeyL' && running) bottleAction(); });
 function babyStep(dt) {
   baby.t += dt; const t = baby.t;
+  // random hunger
+  if (!baby.hungry && !feed && !play) { baby.nextH -= dt; if (baby.nextH <= 0) { baby.hungry = true; baby.cryT = 4; toast('👶 កូនឃ្លានទឹកដោះគោហើយ! 🍼 (ដបនៅលើតុក្នុងផ្ទះបាយ)'); } }
+  if (!baby.hungry && !feed && !play && !baby.wantP) { baby.nextP -= dt; if (baby.nextP <= 0) { baby.wantP = true; toast('👶 កូនចង់លេងតុក្កតា! 🧸 (នៅលើតុឈើក្បែរគ្រែ)'); } }
+  const bp = baby.state === 'bed' ? baby.grp.group.position : P;
+  cryUpdate(baby.hungry && !feed, Math.hypot(P.x - bp.x, (P.y - bp.y) * 1.5, P.z - bp.z));
+  if (feed) {
+    feed.t += dt; const lv = Math.max(0.08, 1 - feed.t / feed.dur); feed.hs.forEach(([, milk]) => milk.scale.y = lv);
+    const far = baby.state === 'bed' && Math.hypot(P.x - bp.x, P.z - bp.z) > 3.2;
+    if (far) endFeed(false); else if (feed.t >= feed.dur) endFeed(true);
+  }
+  if (play) {
+    play.t += dt; play.bs.forEach(b => { b.position.y = 0.15 + Math.abs(Math.sin(play.t * 4)) * 0.025; b.rotation.z = Math.sin(play.t * 5) * 0.25; });
+    if (baby.state !== 'bed' || Math.hypot(P.x - bp.x, P.z - bp.z) > 3.2) endPlay(false); else if (play.t >= play.dur) endPlay(true);
+  }
+  const mode = feed ? 'feed' : baby.hungry ? 'cry' : play ? 'play' : 'calm';
   const anim = B => {
-    B.torso.scale.set(1 + Math.sin(t * 2.2) * 0.03, 1, 1 + Math.sin(t * 2.2) * 0.03); B.head.rotation.z = Math.sin(t * 0.7) * 0.06;
-    for (const a of B.arms) { const { sx, ph } = a.userData; a.rotation.y = sx * (0.35 + Math.sin(t * 1.7 + ph) * 0.22); a.rotation.x = Math.sin(t * 1.3 + ph) * 0.3; }
-    for (const l of B.legs) { const { sx, ph } = l.userData; l.rotation.x = Math.sin(t * 2.0 + ph) * 0.24; l.rotation.y = sx * (0.22 + Math.sin(t * 1.5 + ph) * 0.12); }
+    const cry = mode === 'cry', pl = mode === 'play', amp = cry ? 2.4 : pl ? 2 : mode === 'feed' ? 0.5 : 1, spd = cry ? 2.2 : pl ? 1.8 : 1;
+    B.torso.scale.set(1 + Math.sin(t * 2.2 * spd) * (cry ? 0.06 : 0.03), 1, 1 + Math.sin(t * 2.2 * spd) * (cry ? 0.06 : 0.03)); B.head.rotation.z = Math.sin(t * (cry ? 8 : 0.7)) * (cry ? 0.12 : 0.06);
+    for (const a of B.arms) { const { sx, ph } = a.userData; a.rotation.y = sx * (0.35 + Math.sin(t * 1.7 * spd + ph) * 0.22 * amp); a.rotation.x = Math.sin(t * 1.3 * spd + ph) * 0.3 * amp; }
+    for (const l of B.legs) { const { sx, ph } = l.userData; l.rotation.x = Math.sin(t * 2.0 * spd + ph) * 0.24 * amp; l.rotation.y = sx * (0.22 + Math.sin(t * 1.5 * spd + ph) * 0.12 * amp); }
+    B.mouth.scale.set(cry ? 1.3 : pl ? 1.6 : mode === 'feed' ? 0.7 : 1, cry ? 4 + Math.sin(t * 9) * 1.2 : pl ? 2.4 + Math.sin(t * 7) * 0.8 : mode === 'feed' ? 2 + Math.sin(t * 8) * 1.2 : 1, cry ? 1.5 : 1);
+    B.eyes.forEach(e => e.scale.y = cry ? 3 : 1);
+    B.bubble.visible = cry; B.bubble.position.y = 0.52 + Math.sin(t * 5) * 0.02;
+    B.bubble2.visible = mode === 'calm' && baby.wantP; B.bubble2.position.y = 0.52 + Math.sin(t * 3) * 0.02;
   };
-  if (baby.state === 'bed') anim(baby.grp); else { anim(baby.tp); anim(baby.fp); }
+  if (baby.state === 'bed') anim(baby.grp); else { anim(baby.tp); anim(baby.fp); baby.grp.group.visible = false; }
   const nb = nearBaby(), bd = bedForBaby(), show = nb || !!bd;
   babyBtn.classList.toggle('show', show);
-  if (show) babyBtn.textContent = (nb ? '👶 បីកូន' : '🛏 ដាក់កូនលើគ្រែ') + (mobile ? '' : ' [K]');
+  if (show) babyBtn.textContent = (nb ? '👶 បីកូន' : bd.type === 'crib' ? '🛏 ដាក់កូនក្នុងគ្រែតូច' : '🛏 ដាក់កូនលើគ្រែ') + (mobile ? '' : ' [K]');
+  let bt = '';
+  if (babyOk()) {
+    if (bottle.state === 'held') { if (babyReach()) bt = '🍼 ឲ្យកូនបៅ'; else if (nearHome()) bt = '↩ ដាក់ដបវិញ'; }
+    else if (bottle.state === 'home' && nearHome() && handsFree()) bt = '🍼 យកដបទឹកដោះគោ';
+  }
+  let bb = '';
+  if (babyOk()) {
+    if (bear.state === 'held') { if (babyReach() && baby.state === 'bed') bb = '🧸 ឲ្យកូនលេង'; else if (nearBear()) bb = '↩ ដាក់តុក្កតាវិញ'; }
+    else if (bear.state === 'home' && nearBear() && handsFree() && bottle.state !== 'held') bb = '🧸 យកតុក្កតា';
+  }
+  bearBtn.classList.toggle('show', !!bb); if (bb) bearBtn.textContent = bb + (mobile ? '' : ' [J]');
+  bottleBtn.classList.toggle('show', !!bt); if (bt) bottleBtn.textContent = bt + (mobile ? '' : ' [L]');
 }
 function refreshHeld() { // show the carried bowl on the controlled character (third person) and in front of the camera (first person)
   boy.setHold(null); girl.setHold(null); heldFP.clear(); heldFP.position.set(0.24, -0.3, -0.55); heldFP.rotation.set(0, 0, 0);
   baby.tp.group.removeFromParent();
   if (baby.state === 'held') { me.group.add(baby.tp.group); me.setHold(babyHand); heldFP.add(baby.fp.group); return; }   // carrying the baby
+  if (bottle.state === 'held' && !held && !drink) { me.setHold(makeBottle()); const bf = makeBottle(); bf.scale.setScalar(2.1); bf.position.y = -0.2; heldFP.add(bf); return; }   // carrying the milk bottle
+  if (bear.state === 'held' && !held && !drink) { me.setHold(makeBear()); const bf = makeBear(); bf.scale.setScalar(1.7); bf.position.y = -0.22; heldFP.add(bf); return; }   // carrying the teddy bear
   if (drink && !held) { me.setHold(makeCan(drink.col)); const c = makeCan(drink.col); c.scale.setScalar(2); heldFP.add(c); return; }
   if (!held) return;
   me.setHold(makeBowl(held.kind));
@@ -1633,7 +1821,7 @@ function joyMove(t) {
 joyEl.addEventListener('touchstart', e => { e.preventDefault(); joyId = e.changedTouches[0].identifier; joyMove(e.changedTouches[0]); }, { passive: false });
 document.addEventListener('touchstart', e => {
   if (!mobile || !running) return;
-  for (const t of e.changedTouches) if (lookId === null && !t.target.closest('#mobile,#switchBtn,#sitBtn,#cookBtn,#topleft,#settingsBtn,#settings,#buyBtn,#fuelBtn,#babyBtn,#buyPanel,#phoneBtn,#phone')) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; tap = { x: t.clientX, y: t.clientY, t: performance.now() }; }
+  for (const t of e.changedTouches) if (lookId === null && !t.target.closest('#mobile,#switchBtn,#sitBtn,#cookBtn,#topleft,#settingsBtn,#settings,#buyBtn,#fuelBtn,#babyBtn,#bottleBtn,#bearBtn,#buyPanel,#phoneBtn,#phone')) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; tap = { x: t.clientX, y: t.clientY, t: performance.now() }; }
 }, { passive: false });
 document.addEventListener('touchmove', e => {
   if (!e.target.closest('#settings,#menu,#buyPanel,#phone')) e.preventDefault();  // allow scrolling inside menus

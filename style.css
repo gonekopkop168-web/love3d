@@ -169,3 +169,9 @@ body.mobile #fs{display:block}
 
 #babyBtn{position:fixed;left:50%;bottom:38%;transform:translateX(-50%);padding:12px 26px;border:0;border-radius:999px;background:#ffc2d9;color:#4a0f26;font-size:18px;font-weight:700;cursor:pointer;display:none;z-index:5;white-space:nowrap}
 #babyBtn.show{display:block}
+
+#bottleBtn{position:fixed;left:50%;bottom:48%;transform:translateX(-50%);padding:12px 26px;border:0;border-radius:999px;background:#bfe3ff;color:#0b2a4a;font-size:18px;font-weight:700;cursor:pointer;display:none;z-index:5;white-space:nowrap}
+#bottleBtn.show{display:block}
+
+#bearBtn{position:fixed;left:50%;bottom:58%;transform:translateX(-50%);padding:12px 26px;border:0;border-radius:999px;background:#ffd9a0;color:#4a2a12;font-size:18px;font-weight:700;cursor:pointer;display:none;z-index:5;white-space:nowrap}
+#bearBtn.show{display:block}
