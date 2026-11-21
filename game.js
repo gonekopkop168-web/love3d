@@ -1,9 +1,53 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { createGlbRig } from './glbrig.js';
 import { createCharacter } from './npc.js';
 import bannerData from './banner-data.js';
 import { AVATARS } from './avatars.js';
 import cryData from './cry-data.js';
+import photoData from './photo-data.js';
+import photo2Data from './photo2-data.js';
+import photo3Data from './photo3-data.js';
+import photo4Data from './photo4-data.js';
+import photo5Data from './photo5-data.js';
+import photo6Data from './photo6-data.js';
+import photo7Data from './photo7-data.js';
+import photo8Data from './photo8-data.js';
+import raptorImg from './truck-img.js';
+import plateImg from './plate-img.js';
+import motoPlateImg from './plate-moto-img.js';
+import { createDogRig } from './dogrig.js';
+import dreamImg from './honda-img.js';
+/* ---- Ford F-150 Raptor: a real 3D body + one wheel model (4 copies). Loaded first because the showroom builds its truck at start-up. If it can't load, the old box-built truck is used. ---- */
+const TRUCK = await (async () => {
+  try {
+    const L = new GLTFLoader(), ld = u => new Promise((ok, no) => L.load(u, ok, undefined, no));
+    const [b, w] = await Promise.all([ld('models/ford_body.glb'), ld('models/ford_wheel.glb')]);
+    let bodyMat = null;
+    for (const s of [b.scene, w.scene]) s.traverse(o => { if (o.isMesh) { o.material.metalness = 0.15; o.material.roughness = 0.55; if (s === b.scene) bodyMat = o.material; } });
+    return { body: b.scene, wheel: w.scene, bodyMat };
+  } catch (e) { console.warn('Ford Raptor model not loaded, using the simple truck:', e); return null; }
+})();
+/* ---- Honda Dream 2027: one 3D body + one wheel model (2 copies). The body is split once, at load, into the part that turns with the handlebar and the rest. ---- */
+const HONDA = await (async () => {
+  try {
+    const L = new GLTFLoader(), ld = u => new Promise((ok, no) => L.load(u, ok, undefined, no));
+    const [b, w] = await Promise.all([ld('models/honda_body.glb'), ld('models/honda_wheel.glb')]);
+    for (const s of [b.scene, w.scene]) s.traverse(o => { if (o.isMesh) { o.material.metalness = 0.2; o.material.roughness = 0.5; } });
+    let mesh = null; b.scene.traverse(o => { if (o.isMesh && !mesh) mesh = o; });
+    const gm = mesh.geometry, pos = gm.attributes.position, idx = gm.index.array, rest = [], front = [];
+    for (let i = 0; i < idx.length; i += 3) {                                    // sort every triangle by where its centre is: fork, front wheel arch, handlebar and lamp turn with the steering
+      const a = idx[i], c1 = idx[i + 1], c2 = idx[i + 2];
+      const cy = (pos.getY(a) + pos.getY(c1) + pos.getY(c2)) / 3, cz = (pos.getZ(a) + pos.getZ(c1) + pos.getZ(c2)) / 3;
+      const isFront = cy > 0.43 ? cz > 0.12 : cy > 0.22 ? cz > 0.318 : cz > 0.36 - 0.45 * (cy - 0.05);
+      (isFront ? front : rest).push(a, c1, c2);
+    }
+    const mk = list => { const g2 = gm.clone(); g2.setIndex(list); return new THREE.Mesh(g2, mesh.material); };
+    return { rest: mk(rest), front: mk(front), wheel: w.scene };
+  } catch (e) { console.warn('Honda Dream model not loaded, using the simple motorbike:', e); return null; }
+})();
 const avatarOf = n => n === 'Ny Ny' ? AVATARS.nyny : n === 'G1 G1' ? AVATARS.g1 : null;
 const avImg = (n, c = '') => { const a = avatarOf(n); return a ? `<img class="pav ${c}" src="${a}" alt="">` : '<i>🧑</i>'; };
 
@@ -155,13 +199,46 @@ function bed(cx, cz, by, hd, color = 0x3b6a8f) {
   box(cx + hd * 1.1, by, cz, 0.1, 0.95, 1.9, WOOD);
   for (const s of [-1, 1]) { box(cx + hd * 0.78, by + 0.65, cz + s * 0.45, 0.4, 0.15, 0.6, WHITE, false); box(cx + hd * 0.95, by, cz + s * 1.2, 0.45, 0.5, 0.45, WOOD); }
 }
-const wardrobe = (x, z, w, d, by) => { box(x, by, z, w, 2.2, d, 0xd8d0c2); box(x + (w > d ? 0 : (w / 2 + 0.01)), by + 0.9, z + (w > d ? d / 2 + 0.01 : 0), w > d ? 0.04 : 0.02, 0.3, w > d ? 0.02 : 0.04, METAL, false); };
+const WARDROBES = [];
+const wardrobe = (x, z, w, d, by) => { WARDROBES.push({ x, z, w, d, by }); box(x, by, z, w, 2.2, d, 0xd8d0c2); box(x + (w > d ? 0 : (w / 2 + 0.01)), by + 0.9, z + (w > d ? d / 2 + 0.01 : 0), w > d ? 0.04 : 0.02, 0.3, w > d ? 0.02 : 0.04, METAL, false); };
 const painting = (x, y, z, ax, c) => box(x, y, z, ax ? 1.4 : 0.05, 1.0, ax ? 0.05 : 1.4, c, false);
+function photoFrame(x, y, z, data = photoData, face = 'x', w = 1.4, h = 1.0) {     // wall photo in a wooden frame; face = the direction the picture looks: 'x' (+x), 'nx' (-x), 'z' (+z), 'nz' (-z); y = bottom of the picture
+  const alongX = face === 'x' || face === 'nx', sg = face[0] === 'n' ? -1 : 1;
+  box(x, y - 0.05, z, alongX ? 0.06 : w + 0.1, h + 0.1, alongX ? w + 0.1 : 0.06, 0x5a3a1e, false);
+  const tex = new THREE.TextureLoader().load(data); tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.3 }));
+  m.position.set(x + (alongX ? 0.032 * sg : 0), y + h / 2, z + (alongX ? 0 : 0.032 * sg));
+  m.rotation.y = alongX ? sg * Math.PI / 2 : (sg > 0 ? 0 : Math.PI); scene.add(m);
+}
+let _mirTex = null;
+function vanity(cx, cz, by) {      // wash basin + tap + framed mirror (white vessel basin on a counter, chrome gooseneck tap)
+  const CH = new THREE.MeshStandardMaterial({ color: 0xe9edf1, metalness: 0.55, roughness: 0.18 }), PORC = new THREE.MeshStandardMaterial({ color: 0xfbfbfa, roughness: 0.25 });
+  const top = by + 0.89;
+  box(cx, by, cz, 1.2, 0.85, 0.5, 0xe8e4dc); box(cx, by + 0.85, cz, 1.3, 0.04, 0.55, 0xf4f3ef, false);                     // cabinet + white counter
+  box(cx - 0.3, by + 0.5, cz + 0.255, 0.02, 0.02, 0.02, 0xb0a99c, false); box(cx + 0.3, by + 0.5, cz + 0.255, 0.02, 0.02, 0.02, 0xb0a99c, false);   // door knobs
+  const bz = cz + 0.02, BW = 0.62, BD = 0.42, BH = 0.14, T = 0.04;                                                        // basin (floor + 4 walls so it is hollow)
+  box(cx, top, bz, BW, 0.03, BD, PORC, false);
+  box(cx, top, bz - BD / 2 + T / 2, BW, BH, T, PORC, false); box(cx, top, bz + BD / 2 - T / 2, BW, BH, T, PORC, false);
+  box(cx - BW / 2 + T / 2, top, bz, T, BH, BD, PORC, false); box(cx + BW / 2 - T / 2, top, bz, T, BH, BD, PORC, false);
+  box(cx, top + 0.031, bz, BW - 0.1, 0.004, BD - 0.1, 0xe6e8ea, false, false);                                           // soft shaded bowl floor
+  const dr = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.006, 16), CH); dr.position.set(cx, top + 0.035, bz + 0.02); scene.add(dr);   // chrome drain
+  const fz = bz - BD / 2 - 0.03, fx = cx + 0.04, R = 0.075, H = 0.2;                                                      // tap: column + gooseneck arc + spout
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.02, H, 14), CH); col.position.set(fx, top + H / 2, fz); col.castShadow = true; scene.add(col);
+  const arc = new THREE.Mesh(new THREE.TorusGeometry(R, 0.0135, 10, 20, Math.PI), CH); arc.rotation.y = Math.PI / 2; arc.position.set(fx, top + H, fz + R); arc.castShadow = true; scene.add(arc);
+  const sp = new THREE.Mesh(new THREE.CylinderGeometry(0.0135, 0.0135, 0.05, 10), CH); sp.position.set(fx, top + H - 0.025, fz + 2 * R); scene.add(sp);
+  const lv = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.07, 8), CH); lv.rotation.z = Math.PI / 2; lv.position.set(fx + 0.045, top + 0.1, fz); scene.add(lv);   // side lever
+  const tw = box(cx + 0.5, top, cz + 0.02, 0.26, 0.035, 0.18, 0xe9e2d6, false); box(cx + 0.5, top + 0.035, cz + 0.02, 0.26, 0.03, 0.18, 0xf2ede4, false);   // folded towel
+  if (!_mirTex) { const c = document.createElement('canvas'); c.width = 128; c.height = 128; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 128, 128); g.addColorStop(0, '#f2f6f8'); g.addColorStop(0.5, '#aebcc4'); g.addColorStop(1, '#6f7f89'); x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+    x.fillStyle = 'rgba(255,255,255,.35)'; x.beginPath(); x.moveTo(10, 128); x.lineTo(40, 128); x.lineTo(118, 0); x.lineTo(88, 0); x.fill(); _mirTex = new THREE.CanvasTexture(c); _mirTex.colorSpace = THREE.SRGBColorSpace; }
+  const mz = cz - 0.28, my = by + 1.62;
+  box(cx, by + 1.2, mz, 1.0, 0.84, 0.03, 0xcfe8e0, false, false);                                                          // frosted-glass frame
+  box(cx, by + 1.24, mz + 0.0155, 0.88, 0.76, 0.004, new THREE.MeshStandardMaterial({ map: _mirTex, metalness: 0.3, roughness: 0.08 }), false, false);   // mirror
+  box(cx, by + 2.12, mz + 0.03, 0.9, 0.02, 0.14, 0xdcefe9, false, false);                                                   // little glass shelf above
+}
 function bath(by) {
   box(7.5, by, -3, 5, 0.015, 8, repMat(tileTex, 8, 13, .3), false, false);
   box(9.5, by, -5.8, 0.4, 0.4, 0.65, WHITE); box(9.75, by + 0.4, -5.8, 0.15, 0.4, 0.5, WHITE);
-  box(6, by, -6.6, 1.2, 0.85, 0.5, 0xe8e4dc); box(6, by + 0.85, -6.6, 1.3, 0.04, 0.55, 0x222222, false);
-  box(6, by + 1.2, -6.88, 1.0, 0.8, 0.04, 0xdff3ff, false);
+  vanity(6, -6.6, by);
   box(9.2, by, -2.2, 1.6, 0.08, 1.6, WHITE, false);
   box(8.4, by, -2.2, 0.04, 2, 1.6, GLASS, true, false); box(8.9, by, -1.4, 1.0, 2, 0.04, GLASS, true, false);
   box(9.8, by + 2.0, -2.6, 0.3, 0.04, 0.3, METAL, false);
@@ -228,20 +305,24 @@ function fridgeStep(dt) {
   }
 }
 table(-3.5, -4.2, 2.2, 1.1);
+photoFrame(-6, 1.3, -0.13, photo7Data, 'nz', 1.2, 0.9);   // family-with-baby photo on the kitchen's far wall
 [-4.2, -2.8].forEach(x => { chair(x, -5.1, -1); chair(x, -3.3, 1); });
 // Hall
-box(5.2, 0, 1.5, 1.6, 0.8, 0.4, WOOD); plant(0.7, 6.4); plant(6.8, 1.6); painting(0.12, 1.8, 5, false, 0x3a6ea5);
+box(5.2, 0, 1.5, 1.6, 0.8, 0.4, WOOD); plant(0.7, 6.4); plant(6.8, 1.6); photoFrame(0.12, 1.8, 5); photoFrame(5.2, 1.25, 1.1, photo2Data, 'z', 1.2, 0.853);   // wall photos   // family photo (replaces the blue painting)
 // Guest room + bath
 guestRoom(0); bath(0);
+photoFrame(4.87, 1.3, -3.5, photo4Data, 'nx', 1.2, 0.853);   // park-bench couple photo on the wall above the ground-floor guest bed
 
 /* ---- Upper floor ---- */
 const U = FL;
 box(-6, U, 3.5, 4, 0.02, 3.5, 0xb8a58a, false, false);
 bed(-8.7, 2.5, U, -1, 0x8a3b3b); wardrobe(-4.5, 0.55, 3, 0.6, U);
-box(-3, U, 5.3, 1.6, 0.8, 0.5, WOOD); plant(-0.9, 6.3, U); painting(-6, U + 1.7, 0.14, true, 0x2f7d6a);
+box(-3, U, 5.3, 1.6, 0.8, 0.5, WOOD); plant(-0.9, 6.3, U); photoFrame(-8.0, U + 1.4, 0.13, photo6Data, 'z', 1.4, 0.933);   // park-walk photo, centred on the free wall left of the wardrobe (replaces the green painting)
+photoFrame(-5, U + 1.3, -0.13, photo8Data, 'nz', 1.2, 0.9);   // street-café couple photo on the green-bed room's north wall
 bed(-7.8, -3.5, U, -1, 0x6a8f3b); table(-2.5, -6.4, 1.6, 0.7, U); chair(-2.5, -5.5, 1, U); wardrobe(-9.4, -6.2, 0.6, 1.4, U);
 guestRoom(U); bath(U);
-box(5, U, 1.5, 1.6, 0.8, 0.4, WOOD); plant(0.7, 6.3, U); painting(0.12, U + 1.8, 5, false, 0xd29b3a);
+photoFrame(4.87, U + 1.3, -3.5, photo5Data, 'nx', 1.3, 0.833);   // Khmer wedding photo on the wall above the upstairs guest bed
+box(5, U, 1.5, 1.6, 0.8, 0.4, WOOD); plant(0.7, 6.3, U); photoFrame(0.12, U + 1.8, 5, photo3Data);   // sunset couple photo (replaces the orange painting)
 
 /* ================= OUTDOORS ================= */
 const gShape = new THREE.Shape();                                  // grass ground with a hole where the pool is (shape y = -world z)
@@ -283,6 +364,287 @@ function tree(x, z, s = 1) {
 }
 [[-14, 10], [-16, 0], [-14, -8], [14, -6], [16, -14], [-12, -22], [10, -22], [0, -25], [-18, 15], [22, -4], [26, 18], [8, 16], [-10, 16], [-22, -14]].forEach(([x, z], i) => tree(x, z, 1 + (i % 3) * 0.15));
 [[-6, 12.5, 6], [-14, 6, 0.8]].forEach(([x, z, w]) => box(x, 0, z, w, 0.8, 0.8, M(0x2d6a2f, 0.95)));
+/* ---- wooden dog house in the front yard + a yellow Labrador that sleeps in it and wanders off on patrol now and then ---- */
+const DH = { x: -11.5, z: 13.0 };                                    // doghouse centre, its arched door faces +z (toward the yard)
+(function dogHouse() {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  x.fillStyle = '#c9822f'; x.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 8; i++) { x.fillStyle = `hsla(28,60%,${38 + Math.random() * 14}%,.35)`; x.fillRect(0, i * 16, 128, 16); x.fillStyle = 'rgba(70,35,8,.65)'; x.fillRect(0, i * 16, 128, 2); }
+  for (let i = 0; i < 60; i++) { x.fillStyle = 'rgba(90,45,10,.18)'; x.fillRect(Math.random() * 128, Math.random() * 128, 14 + Math.random() * 30, 1); }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  const WD = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, side: THREE.DoubleSide }), TR = M(0xd9822b, 0.7), RF = M(0x4b4e54, 0.95);
+  const hx = DH.x, hz = DH.z, W = 1.0, D = 1.3, WH = 0.7, T = 0.04;
+  box(hx, 0.02, hz, W, 0.04, D, 0x3a2a1c, false, false);                                                              // floor
+  box(hx - W / 2 + T / 2, 0, hz, T, WH, D, WD, false); box(hx + W / 2 - T / 2, 0, hz, T, WH, D, WD, false);          // side walls
+  box(hx, 0, hz - D / 2 + T / 2, W, WH, T, WD, false);                                                                // back wall
+  box(hx - 0.385, 0, hz + D / 2 - T / 2, 0.23, WH, T, WD, false); box(hx + 0.385, 0, hz + D / 2 - T / 2, 0.23, WH, T, WD, false);   // front, either side of the door
+  box(hx, 0.6, hz + D / 2 - T / 2, 0.54, 0.1, T, WD, false);                                                          // lintel over the door
+  for (const sx of [-1, 1]) box(hx + sx * 0.28, 0, hz + D / 2 + 0.005, 0.04, 0.62, 0.05, TR, false);                  // door frame
+  box(hx, 0.6, hz + D / 2 + 0.005, 0.6, 0.04, 0.05, TR, false);
+  const gs = new THREE.Shape(); gs.moveTo(-W / 2, 0); gs.lineTo(W / 2, 0); gs.lineTo(0, 0.42); gs.closePath();         // gable ends
+  for (const sz of [-1, 1]) { const g = new THREE.Mesh(new THREE.ShapeGeometry(gs), WD); g.position.set(hx, WH, hz + sz * (D / 2 - T / 2)); scene.add(g); }
+  const ang = Math.atan2(0.42 + 0.04, 0.5), L = Math.hypot(0.62, 0.46);                                                 // roof: two dark-shingle slopes with orange edges
+  for (const sx of [-1, 1]) {
+    const r = new THREE.Mesh(new THREE.BoxGeometry(L, 0.045, D + 0.16), RF); r.position.set(hx + sx * 0.3, WH + 0.23, hz); r.rotation.z = -sx * ang; r.castShadow = true; scene.add(r);
+    for (const sz of [-1, 1]) { const e = new THREE.Mesh(new THREE.BoxGeometry(L, 0.06, 0.04), TR); e.position.set(hx + sx * 0.3, WH + 0.23, hz + sz * (D / 2 + 0.08)); e.rotation.z = -sx * ang; scene.add(e); }
+  }
+  box(hx, WH + 0.4, hz, 0.05, 0.05, D + 0.16, TR, false);                                                              // ridge cap
+  blk(hx, hz, W + 0.1, D + 0.1, 0, 1.1);
+})();
+function makeDog() {               // yellow Labrador, faces +z, origin on the ground between the paws, ~0.7 m tall at the head
+  const g = new THREE.Group(), FUR = M(0xdfb673, 0.95), LT = M(0xf0dbab, 0.95), EAR = M(0xc4944f, 0.95), BK = new THREE.MeshStandardMaterial({ color: 0x1a1412, roughness: 0.3 }), PK = M(0xd9707f, 0.6);
+  const add = (par, geo, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.castShadow = true; par.add(m); return m; };
+  const body = new THREE.Group(); body.position.y = 0.47; g.add(body);
+  const tr = add(body, new THREE.CapsuleGeometry(0.14, 0.42, 6, 12), FUR, 0, 0, 0); tr.rotation.x = Math.PI / 2;
+  add(body, new THREE.SphereGeometry(0.15, 12, 10), FUR, 0, 0.01, 0.27, 1, 1.05, 1.05);                                // chest
+  add(body, new THREE.SphereGeometry(0.1, 10, 8), LT, 0, -0.07, 0.18, 1, 0.8, 1.4);                                    // pale belly
+  const neck = add(body, new THREE.CylinderGeometry(0.075, 0.1, 0.22, 10), FUR, 0, 0.12, 0.38); neck.rotation.x = 0.7;
+  const head = new THREE.Group(); head.position.set(0, 0.24, 0.5); body.add(head);
+  add(head, new THREE.SphereGeometry(0.105, 14, 10), FUR, 0, 0, 0, 1, 0.95, 1.05);
+  add(head, new THREE.BoxGeometry(0.115, 0.085, 0.16), LT, 0, -0.045, 0.115);                                           // muzzle
+  add(head, new THREE.SphereGeometry(0.03, 8, 6), BK, 0, -0.02, 0.2, 1.2, 0.9, 1);                                     // nose
+  const tongue = add(head, new THREE.BoxGeometry(0.04, 0.008, 0.07), PK, 0, -0.088, 0.14);
+  const ears = [];
+  for (const sx of [-1, 1]) {
+    add(head, new THREE.SphereGeometry(0.022, 8, 6), BK, sx * 0.045, 0.035, 0.085);                                     // eyes
+    const e = add(head, new THREE.SphereGeometry(0.06, 10, 8), EAR, sx * 0.105, 0.02, -0.01, 0.35, 1.2, 0.8); e.rotation.z = sx * 0.25; ears.push(e);   // floppy ears
+  }
+  const tailG = new THREE.Group(); tailG.position.set(0, 0.07, -0.34); body.add(tailG);
+  const tl = add(tailG, new THREE.CylinderGeometry(0.018, 0.045, 0.42, 8), FUR, 0, 0, -0.17); tl.rotation.x = -1.15;      // thick otter tail
+  const legs = [];
+  for (const [lx, lz, front] of [[-0.09, 0.26, 1], [0.09, 0.26, 1], [-0.09, -0.28, 0], [0.09, -0.28, 0]]) {
+    const l = new THREE.Group(); l.position.set(lx, 0.4, lz); g.add(l);
+    add(l, new THREE.CylinderGeometry(0.04, 0.032, 0.38, 8), FUR, 0, -0.19, 0); add(l, new THREE.SphereGeometry(0.05, 8, 6), LT, 0, -0.39, 0.02, 1, 0.7, 1.4);
+    l.userData = { front, lx }; legs.push(l);
+  }
+  return { g, body, head, tail: tailG, legs, tongue, ears, tr, rig: null };
+}
+const dog = Object.assign(makeDog(), { x: DH.x, z: DH.z - 0.1, yaw: 0, state: 'sleep', t: 30, lie: 1, phase: 0, sp: 0, wps: [], tgt: null, pause: 0, tailT: 0, sniff: 0 });
+dog.g.position.set(dog.x, 0, dog.z); scene.add(dog.g);
+const dogZ = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); x.font = '44px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('💤', 32, 34);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false })); sp.scale.set(0.5, 0.5, 1); sp.position.set(DH.x, 1.75, DH.z + 0.3); sp.renderOrder = 5; sp.visible = false; scene.add(sp); return sp; })();
+const DOG_OBS = [[-10, 16, 1.1], [8, 16, 1.1], [-18, 15, 1.1], [-14, 10, 1.1], [-8, 12.5, 0.8], [-6, 12.5, 0.8], [-4, 12.5, 0.8], [-12.5, 6, 0.8], [-3.0, 16.6, 2.0]];   // trees + hedges the dog walks around
+const dogDoor = { x: DH.x, z: DH.z + 1.35 }, dogBed = { x: DH.x, z: DH.z - 0.12 };
+function dogPickWps() {
+  const n = 2 + Math.floor(Math.random() * 3), out = [];
+  for (let k = 0; k < 40 && out.length < n; k++) {
+    const x = -22 + Math.random() * 36, z = 11.5 + Math.random() * 10;
+    if (DOG_OBS.every(o => Math.hypot(x - o[0], z - o[1]) > o[2] + 1.0) && Math.hypot(x - DH.x, z - DH.z) > 2.2) out.push({ x, z });
+  }
+  return out;
+}
+function dogWalk(dt, tx, tz, spd) {          // steer toward (tx,tz) walking around trees/hedges; returns the remaining distance
+  let dx = tx - dog.x, dz = tz - dog.z; const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
+  for (const o of DOG_OBS) { const ox = dog.x - o[0], oz = dog.z - o[1], od = Math.hypot(ox, oz), R = o[2] + 0.7; if (od < R && od > 0.01) { const k = (R - od) / R * 2.2; dx += ox / od * k; dz += oz / od * k; } }
+  const want = Math.atan2(dx, dz); let df = want - dog.yaw; while (df > Math.PI) df -= 2 * Math.PI; while (df < -Math.PI) df += 2 * Math.PI;
+  dog.yaw += Math.sign(df) * Math.min(Math.abs(df), 2.6 * dt);
+  const go = Math.min(spd, d * 2 + 0.3) * Math.max(0.15, 1 - Math.abs(df) / 1.1);; dog.sp += (go - dog.sp) * Math.min(1, dt * 6);   // slow down into a turn instead of sliding sideways
+  dog.x += Math.sin(dog.yaw) * dog.sp * dt; dog.z += Math.cos(dog.yaw) * dog.sp * dt; dog.phase += dog.sp * dt * 5.2;
+  return d;
+}
+function dogStep(dt) {
+  const D = dog, pd = Math.hypot(P.x - D.x, P.z - D.z);
+  const lieT = D.state === 'sleep' ? 1 : 0; D.lie += Math.sign(lieT - D.lie) * Math.min(Math.abs(lieT - D.lie), dt * 1.0);
+  const moving = D.state === 'leave' || D.state === 'patrol' || D.state === 'home' || D.state === 'enter';
+  if (D.state === 'sleep') { D.sp = 0; D.t -= dt; if (D.t <= 0) D.state = 'wake'; }
+  else if (D.state === 'wake') { D.sp = 0; if (D.lie <= 0.02) D.state = 'leave'; }
+  else if (D.state === 'leave') { if (dogWalk(dt, dogDoor.x, dogDoor.z, 1.2) < 0.4) { D.wps = dogPickWps(); D.state = D.wps.length ? 'patrol' : 'home'; } }
+  else if (D.state === 'patrol') {
+    const w = D.wps[0];
+    if (!w) D.state = 'home';
+    else if (D.pause > 0) { D.pause -= dt; D.sp += (0 - D.sp) * Math.min(1, dt * 6); if (D.pause <= 0) D.wps.shift(); }
+    else if (dogWalk(dt, w.x, w.z, 1.5) < 0.5) { D.pause = 2 + Math.random() * 3; D.sniff = D.pause; }
+  }
+  else if (D.state === 'home') { if (dogWalk(dt, dogDoor.x, dogDoor.z, 1.4) < 0.5) D.state = 'enter'; }
+  else if (D.state === 'enter') { if (dogWalk(dt, dogBed.x, dogBed.z, 0.8) < 0.12) { D.state = 'sleep'; D.t = 25 + Math.random() * 50; D.yaw = 0; D.x = dogBed.x; D.z = dogBed.z; D.sp = 0; } }
+  if (D.sniff > 0) D.sniff -= dt;
+  { let rel = Math.atan2(P.x - D.x, P.z - D.z) - D.yaw; rel = Math.atan2(Math.sin(rel), Math.cos(rel)); const want = pd < 7 && D.state !== 'sleep' && Math.abs(rel) < 2.2 ? Math.max(-0.9, Math.min(0.9, rel)) : 0; D.hy = (D.hy || 0) + (want - (D.hy || 0)) * Math.min(1, dt * 3); }   // looks at you when you are near
+  D.tailT += dt * (pd < 6 && D.state !== 'sleep' ? 14 : D.state === 'sleep' ? 0 : 6);
+  // ---- pose ----
+  const lie = D.lie, sw = Math.sin(D.phase) * 0.5 * Math.min(1, D.sp / 0.3), br = Math.sin(performance.now() / 1000 * 1.8) * 0.012;
+  D.g.position.set(D.x, 0, D.z); D.g.rotation.y = D.yaw;
+  D.body.position.y = 0.47 - 0.3 * lie + Math.abs(Math.sin(D.phase)) * 0.015 * Math.min(1, D.sp); D.body.scale.set(1 + br * 2, 1 + br * 3, 1);
+  D.legs.forEach((l, i) => {
+    const front = l.userData.front, a = (i === 0 || i === 3 ? 1 : -1) * sw;
+    l.position.y = 0.4 - 0.23 * lie; l.rotation.x = a * (1 - lie) + lie * (front ? -1.45 : 0.9); l.rotation.z = lie * (front ? 0 : l.userData.lx * -4);
+  });
+  const sn = D.sniff > 0 ? Math.min(1, D.sniff) : 0;
+  D.head.position.set(0, 0.24 - 0.14 * lie - 0.17 * sn, 0.5 + 0.04 * lie + 0.05 * sn); D.head.rotation.x = 0.1 + lie * 0.55 + sn * 0.9 + Math.sin(D.phase) * 0.03 * D.sp;
+  if (D.rig) D.rig.apply({ lie, sw, phase: D.phase, t: performance.now() / 1000, speed: Math.min(1, D.sp / 0.4), headYaw: D.hy, head: Math.max(0, D.head.rotation.x - 0.1), tailY: D.tail.rotation.y, tailX: D.tail.rotation.x, bob: 0.24 * lie });
+  D.tongue.visible = D.state !== 'sleep' && (D.sp > 0.5 || pd < 6);
+  D.tail.rotation.y = Math.sin(D.tailT) * (D.state === 'sleep' ? 0 : 0.55); D.tail.rotation.x = -0.15 * lie;
+  dogZ.visible = D.state === 'sleep' && pd < 16; if (dogZ.visible) { dogZ.position.y = 1.75 + Math.sin(performance.now() / 700) * 0.06; dogZ.material.opacity = 0.65 + Math.sin(performance.now() / 700) * 0.3; }
+}
+/* ---- banana trees near the house: some without fruit (only a purple flower), some with young green bananas, some ripe yellow ---- */
+const bananaMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
+let bunchHeld = false;                                                      // carrying a chopped banana bunch
+const bananaTrees = [];                                                     // ripe trees whose bunch can be chopped: {bp:Vector3, mesh}
+const BN_GEO = new THREE.CapsuleGeometry(0.032, 0.15, 2, 6);
+function makeBunch() {                                                      // a cut bunch of ripe bananas
+  const g = new THREE.Group(), m = M(0xf1c40f, 0.6), m2 = M(0xe0a800, 0.6);
+  const st = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.2, 6), M(0x6e8a3a, 0.8)); st.position.y = 0.12; g.add(st);
+  for (let h = 0; h < 3; h++) for (let i = 0; i < 5; i++) { const phi = i * Math.PI * 2 / 5 + h * 0.5, b = new THREE.Mesh(BN_GEO, i % 2 ? m : m2); b.position.set(Math.cos(phi) * 0.07, -h * 0.1, Math.sin(phi) * 0.07); b.rotation.set(Math.sin(phi) * 0.3, 0, -Math.cos(phi) * 0.3); b.scale.set(1.3, 1.3, 1.3); g.add(b); }
+  return g;
+}
+function bananaTree(x, z, stage, sc = 1, ry = 0) {       // stage: 'none' | 'green' | 'ripe'; built as ONE mesh (vertex colours) so it stays cheap
+  const Pp = [], Nn = [], Cc = [], m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sv = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
+  const part = (geo, hex, px, py, pz, rx = 0, rY = 0, rz = 0, sx = 1, sy = 1, sz = 1) => {
+    e.set(rx, rY, rz, 'YXZ'); q.setFromEuler(e); m4.compose(v.set(px, py, pz), q, sv.set(sx, sy, sz));
+    let g = geo.clone(); if (g.index) g = g.toNonIndexed(); g.applyMatrix4(m4); col.set(hex);
+    const p = g.attributes.position.array, n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i++) { Pp.push(p[i]); Nn.push(n[i]); } for (let i = 0; i < p.length / 3; i++) Cc.push(col.r, col.g, col.b);
+  };
+  const TRUNK = new THREE.CylinderGeometry(0.14, 0.2, 3.0, 8), RING = new THREE.CylinderGeometry(0.205, 0.205, 0.05, 8);
+  const LF1 = new THREE.BoxGeometry(0.75, 0.03, 1.3).translate(0, 0, 0.65), LF2 = new THREE.BoxGeometry(0.7, 0.03, 1.2).translate(0, 0, 0.6);
+  part(TRUNK, 0x8aa54e, 0, 1.5, 0); for (const y of [0.5, 1.2, 1.9, 2.6]) part(RING, 0x6b8a3a, 0, y, 0, 0, 0, 0, 1.0, 1, 1.0);
+  const nl = 8;
+  for (let k = 0; k < nl; k++) {
+    const yaw = k * Math.PI * 2 / nl + ry, dry = stage === 'ripe' && k === 3, c1 = dry ? 0x9a8a3c : k % 2 ? 0x3a9433 : 0x4fae3c, c2 = dry ? 0x7a6a2c : 0x2f8a2e;
+    part(LF1, c1, 0, 3.0, 0, -0.5, yaw, 0);
+    part(LF2, c2, Math.sin(yaw) * 1.14, 3.0 + 0.62, Math.cos(yaw) * 1.14, 0.55 + (k % 3) * 0.12, yaw, 0);
+  }
+  const mk = () => { const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(Pp, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(Nn, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(Cc, 3));
+    const m = new THREE.Mesh(geo, bananaMat); m.position.set(x, 0, z); m.scale.setScalar(sc); m.castShadow = true; scene.add(m); return m; };
+  mk();                                                                       // trunk + leaves (never change)
+  const ba = ry * 1.7 + 1.1, bx = Math.cos(ba) * 0.26, bz = Math.sin(ba) * 0.26;
+  const STEM = new THREE.CylinderGeometry(0.022, 0.026, 1, 6), BUD = new THREE.SphereGeometry(0.1, 8, 6), BN = new THREE.CapsuleGeometry(0.032, 0.15, 2, 6);
+  const meshes = {};
+  for (const st of ['none', 'green', 'ripe']) {                               // one small mesh per growth stage; only the current one is visible
+    Pp.length = Nn.length = Cc.length = 0;
+    if (st === 'none') { part(STEM, 0x6e8a3a, bx, 2.15, bz, 0, 0, 0, 1, 1.1, 1); part(BUD, 0x7a2054, bx, 1.6, bz, 0, 0, 0, 1.0, 1.8, 1.0); part(BUD, 0x9a3a70, bx, 1.78, bz, 0, 0, 0, 0.8, 1.2, 0.8); }
+    else {
+      part(STEM, 0x6e8a3a, bx, 2.45, bz, 0, 0, 0, 1, 0.95, 1);
+      const bc = st === 'ripe' ? 0xf1c40f : 0x7cb342, bc2 = st === 'ripe' ? 0xe0a800 : 0x5e9a2c;
+      for (let h = 0; h < 4; h++) for (let i = 0; i < 6; i++) {
+        const phi = i * Math.PI / 3 + h * 0.5, y = 2.8 - h * 0.2;
+        part(BN, i % 2 ? bc : bc2, bx + Math.cos(phi) * 0.08, y - 0.1, bz + Math.sin(phi) * 0.08, 0, -phi, 0.32, st === 'ripe' ? 1.15 : 0.9, 1, st === 'ripe' ? 1.15 : 0.9);
+      }
+      part(BUD, 0x7a2054, bx, 1.78, bz, 0, 0, 0, 0.7, 1.5, 0.7);
+    }
+    meshes[st] = mk(); meshes[st].visible = st === stage;
+  }
+  const tr = { meshes, stage, t: 0, wait: 30 + Math.random() * 50, bp: new THREE.Vector3(x + bx * sc, 2.5 * sc, z + bz * sc) };
+  bananaTrees.push(tr);
+  blk(x, z, 0.4 * sc, 0.4 * sc, 0, 3);
+}
+[[-12.3, -4.0, 'green', 1.05], [-12.9, -2.5, 'ripe', 1.15], [-12.1, -1.1, 'none', 0.95], [-12.8, 2.3, 'ripe', 1.1], [-12.2, 4.0, 'green', 1.0],
+ [11.8, -3.0, 'ripe', 1.1], [12.7, -4.5, 'none', 1.0], [11.6, -6.0, 'green', 1.15], [12.5, -1.3, 'green', 0.95], [-1.0, 14.5, 'ripe', 1.05], [7.0, 12.8, 'green', 1.0]].forEach(([x, z, st, sc], i) => bananaTree(x, z, st, sc, i * 0.9));
+/* ---- hand cart (រទេះអូសដៃ): blue steel frame, wooden planks, two big spoked wheels, long silver handles; parked in the front yard by the banana tree ---- */
+const CART = { x: -3.6, z: 16.6 };
+const cartObj = (function handCart() {
+  const wheels = [];
+  const g = new THREE.Group(); g.position.set(CART.x, 0, CART.z); g.rotation.y = 0.35; scene.add(g);
+  const add = (w, h, d, col, x, y, z, cast = true) => { const m = new THREE.Mesh(G, M(col, 0.6, 0.2)); m.scale.set(w, h, d); m.position.set(x, y, z); m.castShadow = cast; m.receiveShadow = true; g.add(m); return m; };
+  const BL = 0x1e6fd0, WD = 0xb98a5a, SV = 0xc9ced4;
+  for (const sz of [-1, 1]) add(1.7, 0.07, 0.06, BL, 0, 0.44, sz * 0.5);                                    // long frame rails
+  for (const x of [-0.8, -0.3, 0.2, 0.7]) add(0.06, 0.06, 1.06, BL, x, 0.44, 0);                              // cross bars
+  for (const z of [-0.31, 0, 0.31]) add(1.7, 0.04, 0.28, WD, 0, 0.5, z);                                      // wooden planks
+  for (const sz of [-1, 1]) {
+    for (const x of [-0.82, 0, 0.82]) add(0.05, 0.5, 0.05, BL, x, 0.78, sz * 0.5);                             // railing posts
+    for (const y of [0.68, 0.88]) add(1.7, 0.035, 0.035, BL, 0, y, sz * 0.5);                                  // railing bars
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.0, 8), M(SV, 0.25, 0.8)); pipe.rotation.z = Math.PI / 2; pipe.position.set(0.7, 1.04, sz * 0.5); pipe.castShadow = true; g.add(pipe);   // long silver handle pipe
+    add(0.05, 0.46, 0.05, BL, 0.82, 0.22, sz * 0.5);                                                          // front leg
+    const br = add(Math.hypot(0.9, 0.55), 0.045, 0.045, BL, 1.3, 0.725, sz * 0.5, false); br.rotation.z = Math.atan2(0.55, 0.9);   // one straight brace from the frame's front corner up to the handle pipe
+    const w = new THREE.Group(); w.position.set(-0.15, 0.38, sz * 0.66); g.add(w); wheels.push(w);                             // wheel
+    const tire = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.07, 10, 28), M(0x151515, 0.9)); tire.castShadow = true; w.add(tire);                  // fat knobbly tyre
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.255, 0.022, 8, 28), M(0x08080a, 0.2, 0.8)); w.add(rim);                                       // glossy black rim ring (open, so you see through the spokes)
+    for (let k = 0; k < 10; k++) { const sp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.012, 0.012), M(k % 2 ? 0xb8bcc2 : 0x1a1a1c, 0.3, 0.8)); sp.rotation.z = k * Math.PI / 10; w.add(sp); }   // 20 thin spokes
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.13, 12), M(0x15151a, 0.3, 0.7)); hub.rotation.x = Math.PI / 2; w.add(hub);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.15, 10), M(SV, 0.3, 0.8)); cap.rotation.x = Math.PI / 2; w.add(cap);
+  }
+  for (const y of [0.62, 0.76, 0.9]) add(0.04, 0.04, 1.0, BL, 0.84, y, 0);                                      // front end guard: 3 cross bars + a centre strap
+  add(0.04, 0.46, 0.04, BL, 0.84, 0.72, 0);
+  add(0.05, 0.05, 1.0, SV, 2.1, 1.04, 0, false);                                                                // handle cross-grip
+  blk(CART.x, CART.z, 1.9, 1.5, 0, 0.9);
+  return { g, wheels, col: cols[cols.length - 1], pulling: false };
+})();
+/* pull the cart: button near it -> it trails behind the player on a 2.1 m handle; press again to park it */
+const cartBtn = document.createElement('button'); cartBtn.id = 'cartBtn'; document.body.appendChild(cartBtn);
+const cartFree = () => !driving && !seat && !hug && !swimming && Math.abs(P.y) < 1.2;
+const cartNear = () => Math.hypot(P.x - cartObj.g.position.x, P.z - cartObj.g.position.z) < 3.2 || Math.hypot(P.x - (cartObj.g.position.x + Math.cos(cartObj.g.rotation.y) * 2.1), P.z - (cartObj.g.position.z - Math.sin(cartObj.g.rotation.y) * 2.1)) < 1.8;
+const cartLoad = [];                                                        // bunches lying on the cart planks
+const CART_SLOTS = [[-0.55, -0.2], [-0.55, 0.2], [-0.05, -0.2], [-0.05, 0.2], [0.45, -0.2], [0.45, 0.2]];
+function setBananaStage(t, st) { t.stage = st; t.t = 0; t.wait = (st === 'none' ? 35 : 45) + Math.random() * 40; for (const k in t.meshes) t.meshes[k].visible = k === st; }
+function bananaStep(dt) {                                                   // bud -> green bananas -> ripe over time (ripe stays until chopped)
+  for (const t of bananaTrees) { if (t.stage === 'ripe') continue; t.t += dt; if (t.t >= t.wait) setBananaStage(t, t.stage === 'none' ? 'green' : 'ripe'); }
+}
+function aimBunch() {                                                       // the uncut ripe bunch under the crosshair (white dot)
+  if (!cartFree() || !handsFree() || bunchHeld) return null;
+  const o = camera.getWorldPosition(new THREE.Vector3()), d = camera.getWorldDirection(new THREE.Vector3());
+  let best = null, bt = 1e9;
+  for (const t of bananaTrees) {
+    if (t.stage !== 'ripe') continue;
+    const v = t.bp.clone().sub(o), L = v.length(); if (L < 0.3 || L > 7) continue;
+    const cosA = v.dot(d) / L;                                                 // how close the crosshair is to the bunch (about 17 degrees)
+    if ((cosA > 0.955 || (L < 2 && cosA > 0.8)) && L < bt) { bt = L; best = t; }
+  }
+  return best;
+}
+const BED_SLOTS = TRUCK ? [[-0.5, -2.6], [0.5, -2.6], [-0.5, -2.05], [0.5, -2.05], [-0.5, -1.5], [0.5, -1.5]] : [[-0.5, -2.35], [0.5, -2.35], [-0.5, -1.78], [0.5, -1.78], [-0.5, -1.2], [0.5, -1.2]], BED_Y = TRUCK ? 1.2 : 1.5, BED_D = TRUCK ? 2.1 : 1.78;   // truck bed (local x, z); two layers = 12 bunches
+const bedPt = v => ({ x: v.x - Math.sin(v.h) * BED_D, z: v.z - Math.cos(v.h) * BED_D });
+const trucks = () => fleet.filter(v => v.truck);
+const nearBed = () => !driving ? trucks().find(v => { const b = bedPt(v); return Math.hypot(P.x - b.x, P.z - b.z) < 3.4 && Math.abs(P.y) < 1; }) : null;
+const canPutTruck = () => bunchHeld && cartFree() && !!nearBed();
+function putTruck() {
+  const v = nearBed(); if (!v) return false;
+  if (v.load.length >= BED_SLOTS.length * 2) { toast('ក្រោយឡានពេញហើយ'); return true; }
+  const n = v.load.length, sl = BED_SLOTS[n % BED_SLOTS.length], b = makeBunch();
+  b.rotation.set(0, n * 1.3, Math.PI / 2 * 0.92); b.position.set(sl[0], BED_Y + (n >= BED_SLOTS.length ? 0.3 : 0), sl[1]); v.group.add(b); v.load.push(b);
+  bunchHeld = false; refreshHeld(); toast('🍌 ដាក់ចេកក្នុងឡាន (' + v.load.length + ')'); return true;
+}
+const canPutBunch = () => bunchHeld && cartFree() && cartNear();
+function bananaUse() {                                                      // returns true if it handled the Use press
+  if (fruitSell()) return true;
+  if (!canPutBunch() && canPutTruck()) return putTruck();
+  if (canPutBunch()) {
+    if (cartLoad.length >= CART_SLOTS.length) { toast('រទេះពេញហើយ'); return true; }
+    const b = makeBunch(), sl = CART_SLOTS[cartLoad.length]; b.rotation.set(0, cartLoad.length * 1.3, Math.PI / 2 * 0.92); b.position.set(sl[0], 0.62, sl[1]); cartObj.g.add(b); cartLoad.push(b);
+    bunchHeld = false; refreshHeld(); toast('🍌 ដាក់ចេកក្នុងរទេះ (' + cartLoad.length + ')'); return true;
+  }
+  const t = aimBunch();
+  if (t) { setBananaStage(t, 'none'); bunchHeld = true; refreshHeld(); toast('🔪 កាប់ចេកបានមួយស្និត → យកទៅដាក់រទេះ'); return true; }
+  return false;
+}
+function cartPark() {
+  const c = cartObj, g = c.g, ca = Math.abs(Math.cos(g.rotation.y)), sa = Math.abs(Math.sin(g.rotation.y)), w = 1.9 * ca + 1.5 * sa, d = 1.9 * sa + 1.5 * ca;
+  Object.assign(c.col, { x0: g.position.x - w / 2, x1: g.position.x + w / 2, z0: g.position.z - d / 2, z1: g.position.z + d / 2, on: true });
+  c.pulling = false; c.hitched = false; c.veh = null;
+}
+/* hitch the cart behind a motorbike: reverse the bike up to the handle end (auto) or press the button */
+const hitchPt = v => ({ x: v.x - Math.sin(v.h) * 0.95, z: v.z - Math.cos(v.h) * 0.95 });
+const cartEnd = () => { const g = cartObj.g, a = g.rotation.y; return { x: g.position.x + Math.cos(a) * 2.1, z: g.position.z - Math.sin(a) * 2.1 }; };
+const hitchDist = () => { const h = hitchPt(dv), e = cartEnd(); return Math.hypot(h.x - e.x, h.z - e.z); };
+const canHitch = () => driving && dv.bike && !cartObj.hitched && !cartObj.pulling && hitchDist() < 1.7;
+function cartHitch() { const c = cartObj; c.hitched = true; c.veh = dv; c.col.on = false; toast('🔗 ភ្ជាប់រទេះជាមួយម៉ូតូហើយ'); }
+function cartToggle() {
+  const c = cartObj;
+  if (c.hitched) { cartPark(); toast('🔓 ដោះរទេះហើយ'); return; }
+  if (canHitch()) { cartHitch(); return; }
+  if (c.pulling) { cartPark(); toast('🛒 ដាក់រទេះហើយ'); return; }
+  if (!cartFree() || !cartNear()) return;
+  c.pulling = true; c.col.on = false; toast('🛒 កំពុងអូសរទេះ');
+}
+cartBtn.onclick = e => { cartToggle(); e.currentTarget.blur(); };
+addEventListener('keydown', e => { if (e.code === 'KeyN' && running) cartToggle(); });
+function cartFollow(T, L, rigid, dt) {                                    // the cart trails behind point T on a handle of length L
+  const g = cartObj.g, c = cartObj, ox = g.position.x, oz = g.position.z;
+  const dx = ox - T.x, dz = oz - T.z, d = Math.hypot(dx, dz) || 1;
+  if (rigid || d > L) { g.position.x = T.x + dx / d * L; g.position.z = T.z + dz / d * L; }
+  const th = g.rotation.y, roll = (g.position.x - ox) * Math.cos(th) - (g.position.z - oz) * Math.sin(th);
+  c.wheels.forEach(w => w.rotation.z -= roll / 0.34);
+  let a = Math.atan2(-(T.z - g.position.z), T.x - g.position.x) - th; a = Math.atan2(Math.sin(a), Math.cos(a)); g.rotation.y += a * (1 - Math.exp(-dt * 9));
+}
+function cartStep(dt) {
+  const c = cartObj;
+  if (c.hitched && !(driving && dv === c.veh)) { cartPark(); toast('🔓 ដោះរទេះហើយ'); }
+  if (c.pulling && !cartFree()) { cartPark(); toast('🛒 ដាក់រទេះហើយ'); }
+  if (!c.hitched && canHitch() && dv.v < -0.3 && hitchDist() < 1.1) cartHitch();     // backing up to the cart hooks it on
+  if (c.hitched) cartFollow(hitchPt(c.veh), 2.35, true, dt);
+  else if (c.pulling) cartFollow(P, 2.1, false, dt);
+  const show = c.hitched || canHitch() || (cartFree() && (c.pulling || cartNear()));
+  cartBtn.classList.toggle('show', show);
+  if (show) cartBtn.textContent = (c.hitched ? '🔓 ដោះរទេះ' : canHitch() ? '🔗 ភ្ជាប់រទេះ' : c.pulling ? '↩ ដាក់រទេះ' : '🛒 អូសរទេះ') + (mobile ? '' : ' [N]');
+}
 /* ================= ROAD + COFFEE SHOP (far from the house) ================= */
 const ASPH = M(0x3a3d42, 0.95);
 box(3, 0, 56.25, 6, 0.03, 79.5, ASPH, false, false);                                   // main road x 0..6, z 16.5..96
@@ -296,8 +658,8 @@ JUNC.forEach(j => {                                          // side roads going
   box(3, 0, j, 106, 0.03, 6, ASPH, false, false);            // x -50 .. 56
   for (let x = -48; x < 56; x += 4) if (x < -2 || x > 7) box(x, 0.035, j, 1.8, 0.01, 0.15, WHITE, false, false);
   for (const s of [-1, 1]) { box(-25.7, 0, j + s * 3.7, 48.6, 0.06, 1.4, 0xbdb8ae, false, false); box(31.7, 0, j + s * 3.7, 48.6, 0.06, 1.4, 0xbdb8ae, false, false); }
-  if (j !== 84) { box(-50.5, 0, j, 0.3, 0.9, 6.4, 0xc0392b); box(56.5, 0, j, 0.3, 0.9, 6.4, 0xc0392b); }        // barriers at the dead ends (the z = 84 road continues east to the gas station)
-  if (j !== 84) { box(-50.5, 0.9, j, 0.3, 0.15, 6.4, WHITE, false); box(56.5, 0.9, j, 0.3, 0.15, 6.4, WHITE, false); }
+  if (j !== 84) { box(-50.5, 0, j, 0.3, 0.9, 6.4, 0xc0392b); if (j !== 60) box(56.5, 0, j, 0.3, 0.9, 6.4, 0xc0392b); }   // the z = 60 road now continues east to the fruit shop        // barriers at the dead ends (the z = 84 road continues east to the gas station)
+  if (j !== 84) { box(-50.5, 0.9, j, 0.3, 0.15, 6.4, WHITE, false); if (j !== 60) box(56.5, 0.9, j, 0.3, 0.15, 6.4, WHITE, false); }
 });
 box(18, 0, 17.5, 10, 0.03, 5, ASPH, false, false); box(9.5, 0, 18.5, 7.4, 0.03, 4, ASPH, false, false);                  // parking lot -> driveway -> road
 const labelTex = (lines, w, h, bg, fg) => {
@@ -412,9 +774,12 @@ for (let z = -94, i = 0; z < 122; z += 14, i++) {
   board(-143.9, 3.4, -62, 10, 1.6, labelTex([['CAR & MOTO SHOP', 74, 56], ['ហាងលក់ឡាន និងម៉ូតូ', 40, 112]], 768, 160, '#101820', '#ffd43b')).rotation.y = -Math.PI / 2;
   const lamp = new THREE.PointLight(0xfff0d8, 22, 20, 1.6); lamp.position.set(-152, 2.7, -62); scene.add(lamp);
   const showCar = (x, z, h, col, pad = true) => { const m = buildCarModel(col); m.group.position.set(x, pad ? 0.12 : 0, z); m.group.rotation.y = h; for (const o of [-1.4, 0, 1.4]) staticAvoid.push([x + Math.sin(h) * o, z + Math.cos(h) * o, 1.05]); if (pad) box(x, 0, z, 4.9, 0.12, 2.8, M(0xf4f4f4, 0.3), false); blk(x, z, Math.abs(Math.cos(h)) > .5 ? 2.2 : 4.4, Math.abs(Math.cos(h)) > .5 ? 4.4 : 2.2, 0, 1.5); };
-  const showBike = (x, z, h, col) => { const m = buildBikeModel(col); m.group.position.set(x, 0, z); m.group.rotation.y = h; for (const o of [-0.6, 0.6]) staticAvoid.push([x + Math.sin(h) * o, z + Math.cos(h) * o, 0.45]); m.lean.rotation.z = 0.12; blk(x, z, Math.abs(Math.cos(h)) > .5 ? 0.7 : 2.0, Math.abs(Math.cos(h)) > .5 ? 2.0 : 0.7, 0, 1.2); };
+  const showBike = (x, z, h, col, model) => { const m = buildBikeModel(col, model); m.group.position.set(x, 0, z); m.group.rotation.y = h; for (const o of [-0.6, 0.6]) staticAvoid.push([x + Math.sin(h) * o, z + Math.cos(h) * o, 0.45]); m.lean.rotation.z = 0.12; blk(x, z, Math.abs(Math.cos(h)) > .5 ? 0.7 : 2.0, Math.abs(Math.cos(h)) > .5 ? 2.0 : 0.7, 0, 1.2); };
   showCar(-156, -56, Math.PI / 2, 0x1d6fb8); showCar(-156, -62, Math.PI / 2, 0xe9c46a); showCar(-156, -68, Math.PI / 2, 0x2a9d8f);   // indoor cars
   showBike(-149, -70, Math.PI / 2, 0xc0392b); showBike(-149, -68.2, Math.PI / 2, 0x2563eb); showBike(-149, -66.4, Math.PI / 2, 0x2f9e44);                         // indoor bikes
+  { const m = buildTruckModel(0x0d0d10), tx = -150.3, tz = -62.5; m.group.position.set(tx, 0.12, tz); box(tx, 0, tz, 2.9, 0.12, 6.0, M(0xf4f4f4, 0.3), false);   // Ford Raptor F-150 on a display pad (not owned yet)
+    for (const o of [-2.0, 0, 2.0]) staticAvoid.push([tx, tz + o, 1.15]); blk(tx, tz, 2.3, 5.6, 0, 2.2); }
+  showBike(-146, -66, Math.PI / 2, 0x15161a, 'dream');                                                                                         // Honda Dream 2027 on show
   showCar(-142.2, -50.2, 0, 0xb02a2a, false); showBike(-142.2, -75, 0, 0xf08c00);                                                              // outside on the forecourt
   box(-148, 0, -55.2, 0.6, 1.1, 2.4, 0x6b4f3a); box(-148, 1.1, -55.2, 0.75, 0.05, 2.55, 0xe8e1d4, false);                          // sales desk
   box(-147.9, 1.15, -55.7, 0.3, 0.02, 0.4, 0x222222, false, false);
@@ -654,8 +1019,38 @@ function seatStep(dt) {
 
 const avoidList = () => { const l = staticAvoid.slice(); for (const v of fleet) for (const [x, z] of carCircles(v)) l.push([x, z, v.r]); return l; };
 const common = { THREE, scene, doors, cols, player: P, FL, STEP, spots, avoid: avoidList };
-const girl = createCharacter({ ...common, kind: 'girl', name: 'Ny Ny', start: 'HC' });
-const boy = createCharacter({ ...common, kind: 'boy', name: 'G1 G1', start: 'OUT2' });
+/* ---- 3D bodies for the two main characters (Mixamo-rigged .glb in /models). Guests and bots keep the built-in bodies.
+   If a model can't be loaded, that character simply keeps the built-in body. ---- */
+const MODELS = { dog: null, boy3: null, girl3: null, girl2: null, boy2: null, girl: null, boy: null, baby: null, babyCry: null };
+{
+  const playB = document.getElementById('play');
+  const loader = new GLTFLoader(), load = u => new Promise((ok, no) => loader.load(u, ok, undefined, no));
+  const [a, b, c, d, e2, f2, h3, i3, dg] = await Promise.allSettled([load('models/ny_ny.glb'), load('models/g1_g1.glb'), load('models/baby.glb'), load('models/baby_cry.glb'), load('models/ny_ny2.glb'), load('models/g1_g1_2.glb'), load('models/ny_ny3.glb'), load('models/g1_g1_3.glb'), load('models/dog.glb')]);
+  if (a.status === 'fulfilled') MODELS.girl = { scene: a.value.scene, height: 1.66 }; else console.warn('Ny Ny model not loaded:', a.reason);
+  if (b.status === 'fulfilled') MODELS.boy = { scene: b.value.scene, height: 1.78 }; else console.warn('G1 G1 model not loaded:', b.reason);
+  if (c.status === 'fulfilled') MODELS.baby = { scene: c.value.scene }; else console.warn('Baby model not loaded:', c.reason);
+  if (d.status === 'fulfilled') MODELS.babyCry = { scene: d.value.scene }; else console.warn('Crying baby model not loaded:', d.reason);
+  if (e2.status === 'fulfilled') MODELS.girl2 = { scene: e2.value.scene, height: 1.66 }; else console.warn('Ny Ny outfit 2 not loaded:', e2.reason);
+  if (h3.status === 'fulfilled') MODELS.girl3 = { scene: h3.value.scene, height: 1.66 }; else console.warn('Ny Ny outfit 3 not loaded:', h3.reason);
+  if (i3.status === 'fulfilled') MODELS.boy3 = { scene: i3.value.scene, height: 1.78 }; else console.warn('G1 G1 outfit 3 not loaded:', i3.reason);
+  if (dg.status === 'fulfilled') MODELS.dog = { scene: dg.value.scene }; else console.warn('3D dog not loaded:', dg.reason);
+  if (f2.status === 'fulfilled') MODELS.boy2 = { scene: f2.value.scene, height: 1.78 }; else console.warn('G1 G1 outfit 2 not loaded:', f2.reason);
+  if (playB) { playB.disabled = false; playB.textContent = 'Start Game'; }
+}
+function attachDogModel(d) {   // the real rigged dog replaces the box-built one (that one stays as an invisible puppet: dogStep keeps animating it and the rig reads the numbers)
+  if (!MODELS.dog) return;
+  try {
+    const S = 1.2, wrap = new THREE.Group(), model = SkeletonUtils.clone(MODELS.dog.scene);
+    wrap.scale.setScalar(S); wrap.rotation.y = Math.PI / 2; wrap.position.set(0, 0, 0);   // the model faces -x and is centred on its origin: turn it to +z
+    model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; if (o.material) { o.material.roughness = Math.max(o.material.roughness ?? 0.9, 0.9); o.material.metalness = 0; if (o.material.map) o.material.map.anisotropy = 4; } } });
+    wrap.add(model); d.g.add(wrap);
+    d.rig = createDogRig(THREE, model, { scale: S });
+    d.body.visible = false; d.legs.forEach(l => { l.visible = false; });
+  } catch (e) { console.warn('3D dog not usable, keeping the built-in one', e); d.rig = null; }
+}
+attachDogModel(dog);
+const girl = createCharacter({ ...common, kind: 'girl', name: 'Ny Ny', start: 'HC', glb: MODELS.girl && { ...MODELS.girl, scene: SkeletonUtils.clone(MODELS.girl.scene) } });
+const boy = createCharacter({ ...common, kind: 'boy', name: 'G1 G1', start: 'OUT2', glb: MODELS.boy && { ...MODELS.boy, scene: SkeletonUtils.clone(MODELS.boy.scene) } });
 let me = boy, other = girl;   // "me" = character the human controls, "other" = AI
 boy.control();
 const switchLabel = () => { $('switchBtn').textContent = `🔁 Switch → ${other.name}`; };
@@ -701,10 +1096,97 @@ function buildCarModel(bodyCol = 0xb02a2a) {
   return { group, wheels, wheel, bodyMat };
 }
 const CAR_CFG = { cap: 900, burn: 1 / 6500, offs: [-1.4, 0, 1.4], r: 1.05, maxF: 15, maxB: 24, acc: 8, accB: 12, wb: 2.6, maxS: 0.5, wr: 0.35, near: 3.4, ph: 1.0 };
+let _plateMat = null, _motoPlateMat = null;
+function buildTruckModel(bodyCol = 0x0d0d10, plate = false) {      // the real 3D Raptor (body + 4 spinning / steering wheels); falls back to the box-built one
+  if (!TRUCK) return buildTruckBasic(bodyCol, plate);
+  const S = 6.02, group = new THREE.Group(); scene.add(group);
+  const body = TRUCK.body.clone(true); body.scale.setScalar(S); body.position.set(0, 0.111, -0.129); group.add(body);   // wheelbase centred on the group; lifted so the tyres touch the ground
+  body.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const wheels = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const pivot = new THREE.Group(), spin = new THREE.Group(), holder = new THREE.Group(), inner = TRUCK.wheel.clone(true);
+    pivot.position.set(sx * 1.108, 0.46, sz * 1.851); holder.scale.setScalar(0.939); holder.rotation.y = sx * Math.PI / 2;   // the model's axle points along z -> turn it to x, rim facing outwards
+    inner.position.y = -0.49; inner.traverse(o => { if (o.isMesh) { o.castShadow = true; } });
+    holder.add(inner); spin.add(holder); pivot.add(spin); group.add(pivot);
+    wheels.push({ pivot, spin, front: sz > 0 });
+  }
+  if (plate) {                                                                  // Cambodian licence plate on the rear bumper (only on a truck we bought)
+    if (!_plateMat) { const t = new THREE.TextureLoader().load(plateImg); t.colorSpace = THREE.SRGBColorSpace; _plateMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.4 }); }
+    const pr = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.27), _plateMat); pr.position.set(0, 0.74, -3.095); pr.rotation.y = Math.PI; group.add(pr);
+  }
+  return { group, wheels, wheel: new THREE.Object3D(), bodyMat: TRUCK.bodyMat };
+}
+function buildTruckBasic(bodyCol = 0x0d0d10, plate = false) {      // Ford F-150 Raptor style pickup: lifted, big off-road tyres, black grille with amber lights, flared arches, open bed
+  const group = new THREE.Group(); scene.add(group);
+  const add = (w, h, d, m, x, y, z, cast = true) => { const o = new THREE.Mesh(G, mt(m)); o.scale.set(w, h, d); o.position.set(x, y, z); o.castShadow = cast; o.receiveShadow = true; group.add(o); return o; };
+  const bodyMat = M(bodyCol, 0.25, 0.55), GL = new THREE.MeshStandardMaterial({ color: 0x1c2733, roughness: 0.1, metalness: 0.6, transparent: true, opacity: 0.85 });
+  const AMB = new THREE.MeshBasicMaterial({ color: 0xffa31a }), BLK = M(0x0a0a0c, 0.6, 0.2);
+  add(2.1, 0.55, 5.5, bodyMat, 0, 0.95, 0);                                    // lower body
+  add(2.05, 0.3, 1.8, bodyMat, 0, 1.38, 1.88);                                 // hood
+  add(2.1, 0.42, 1.8, bodyMat, 0, 1.46, 0.1);                                  // cab (lower)
+  add(2.04, 0.5, 1.6, GL, 0, 1.9, 0.1, false);                                 // cab windows
+  add(1.96, 0.08, 1.7, bodyMat, 0, 2.19, 0.1);                                 // roof
+  add(2.0, 0.06, 1.95, DARK, 0, 1.26, -1.78, false);                           // bed floor
+  for (const sx of [-1, 1]) add(0.12, 0.5, 1.95, bodyMat, sx * 0.99, 1.5, -1.78);   // bed sides
+  add(2.1, 0.5, 0.1, bodyMat, 0, 1.5, -2.72); add(2.0, 0.5, 0.1, bodyMat, 0, 1.5, -0.85);   // tailgate + bed front
+  add(1.5, 0.42, 0.08, BLK, 0, 1.2, 2.78);                                     // big black grille
+  for (let k = -1; k <= 1; k++) add(0.14, 0.06, 0.06, AMB, k * 0.35, 1.45, 2.8, false);   // amber marker lights on the grille
+  for (const sx of [-1, 1]) {
+    add(0.5, 0.2, 0.08, new THREE.MeshBasicMaterial({ color: 0xfff2c0 }), sx * 0.8, 1.2, 2.76, false);      // headlights
+    add(0.5, 0.04, 0.09, AMB, sx * 0.8, 1.33, 2.78, false);                                                   // amber DRL strip
+    add(0.12, 0.34, 0.06, new THREE.MeshBasicMaterial({ color: 0xff2a2a }), sx * 0.93, 1.5, -2.77, false);    // tail lights
+    add(0.16, 0.08, 2.4, DARK, sx * 1.1, 0.8, 0.1);                            // side steps
+    for (const fz of [1.75, -1.75]) add(0.2, 0.14, 1.15, BLK, sx * 1.09, 1.15, fz);   // fender flares
+    add(0.5, 0.14, 0.08, BLK, sx * 0.55, 0.78, 2.78);                          // fog-light pods
+    add(0.1, 0.26, 0.06, BLK, sx * 1.1, 1.62, 0.9, false);                     // mirrors
+  }
+  add(2.15, 0.28, 0.28, DARK, 0, 0.78, 2.72); add(2.15, 0.22, 0.2, DARK, 0, 0.78, -2.72);   // bumpers
+  add(0.5, 0.5, 0.5, 0x2a2a2a, 0.45, 1.5, 0.1, false); add(0.5, 0.5, 0.5, 0x2a2a2a, -0.45, 1.5, 0.1, false);   // seats
+  if (plate) {                                                                  // Cambodian licence plate "G1.X.NY.999" on the front and rear bumpers (only on a truck we bought)
+    if (!_plateMat) { const t = new THREE.TextureLoader().load(plateImg); t.colorSpace = THREE.SRGBColorSpace; _plateMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.4 }); }
+    const pg = new THREE.PlaneGeometry(0.52, 0.27), pf = new THREE.Mesh(pg, _plateMat), pr = new THREE.Mesh(pg, _plateMat);
+    pf.position.set(0, 0.78, 2.865); group.add(pf); pr.position.set(0, 0.78, -2.825); pr.rotation.y = Math.PI; group.add(pr);
+  }
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 20), DARK); wheel.position.set(0.45, 1.85, 0.75); wheel.rotation.x = -1.0; group.add(wheel);
+  const wheels = [], RIM = M(0x15161a, 0.4, 0.6);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const pivot = new THREE.Group(), spin = new THREE.Group(); pivot.position.set(sx * 1.05, 0.46, sz * 1.75); pivot.add(spin); group.add(pivot);
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.36, 16), BLK); w.rotation.z = Math.PI / 2; w.castShadow = true; spin.add(w);
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.38, 12), RIM); rim.rotation.z = Math.PI / 2; spin.add(rim);
+    for (const r of [0, Math.PI / 2]) { const sp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.05), RIM); sp.rotation.x = r; spin.add(sp); }
+    for (let k = 0; k < 8; k++) { const t = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.1, 0.12), BLK); const a = k * Math.PI / 4; t.position.set(0, Math.sin(a) * 0.47, Math.cos(a) * 0.47); t.rotation.x = a; spin.add(t); }   // chunky tread blocks
+    wheels.push({ pivot, spin, front: sz > 0 });
+  }
+  return { group, wheels, wheel, bodyMat };
+}
+const TRUCK_CFG = { cap: 1200, burn: 1 / 6000, offs: [-2.0, 0, 2.0], r: 1.15, maxF: 17, maxB: 24, acc: 8.5, accB: 12, wb: 3.7, maxS: 0.45, wr: 0.46, near: 4.0, ph: 1.0, eyeH: 1.95 };
 const car = { ...buildCarModel(), x: 18, z: 10, h: 0, v: 0, steer: 0, spin: 0, ...CAR_CFG, slot: [18, 10], active: true };
 
 /* ---- Motorbike (black Dream-style underbone with a gold stripe) ---- */
-function buildBikeModel(col = 0x15161a) {
+function buildDreamModel(plate = false) {      // Honda Dream 2027: real 3D body (handlebar + front wheel turn together) and two spinning wheels
+  const S = 1.9, group = new THREE.Group(), lean = new THREE.Group(); group.add(lean); scene.add(group);
+  const place = o => { o.scale.setScalar(S); o.position.set(0, 0.149, -0.071); o.castShadow = true; o.receiveShadow = true; return o; };   // wheelbase centred, lifted so the tyres touch the ground
+  lean.add(place(HONDA.rest.clone()));
+  const mkWheel = (par, z, y = 0.278) => {
+    const spin = new THREE.Group(), holder = new THREE.Group(), inner = HONDA.wheel.clone(true);
+    holder.scale.setScalar(0.568); holder.rotation.y = Math.PI / 2; inner.position.y = -0.49; inner.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    holder.add(inner); spin.add(holder); spin.position.set(0, y, z); par.add(spin); return spin;
+  };
+  const wheels = [{ pivot: new THREE.Group(), spin: mkWheel(lean, -0.585, 0.325), front: false }];
+  const RAKE = 0.318, hub = new THREE.Vector3(0, 0.278, 0.66);
+  const tilt = new THREE.Group(); tilt.position.copy(hub); tilt.rotation.x = -RAKE; lean.add(tilt);           // steering axis leans back like a real fork
+  const turn = new THREE.Group(); tilt.add(turn);
+  const unrake = new THREE.Group(); unrake.rotation.x = RAKE; unrake.position.copy(hub).negate().applyAxisAngle(new THREE.Vector3(1, 0, 0), RAKE); turn.add(unrake);   // back to the model's own frame
+  unrake.add(place(HONDA.front.clone()));
+  wheels.push({ pivot: turn, spin: mkWheel(unrake, 0.66), front: true });
+  if (plate) {   // Cambodian plate "G1.X.NY999" on the rear mudguard (only on a bike we bought)
+    if (!_motoPlateMat) { const t = new THREE.TextureLoader().load(motoPlateImg); t.colorSpace = THREE.SRGBColorSpace; _motoPlateMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.4 }); }
+    const pr = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.178), _motoPlateMat); pr.position.set(0, 0.58, -0.968); pr.rotation.set(0.4, Math.PI, 0); lean.add(pr);
+  }
+  return { group, lean, wheels, bodyMat: HONDA.rest.material };
+}
+function buildBikeModel(col = 0x15161a, model, plate = false) {
+  if (model === 'dream' && HONDA) return buildDreamModel(plate);
   const group = new THREE.Group(), lean = new THREE.Group(); group.add(lean); scene.add(group);
   const add = (par, w, h, d, m, x, y, z, cast = true) => { const o = new THREE.Mesh(G, mt(m)); o.scale.set(w, h, d); o.position.set(x, y, z); o.castShadow = cast; par.add(o); return o; };
   const BLK = M(0x15161a, 0.35, 0.4), BODY = M(col, 0.35, 0.4), GOLD = M(0xc9a227, 0.35, 0.6), CHR = M(0xcfd3d8, 0.25, 0.8);
@@ -743,6 +1225,7 @@ function buildBikeModel(col = 0x15161a) {
   return { group, lean, wheels, bodyMat: BODY };
 }
 const BIKE_CFG = { cap: 450, burn: 1 / 4800, wheel: null, offs: [-0.6, 0.6], r: 0.45, maxF: 19, maxB: 28, acc: 9, accB: 13, wb: 1.35, maxS: 0.7, wr: 0.34, near: 2.4, ph: 1.0, bike: true };
+const DREAM_CFG = { ...BIKE_CFG, wb: 1.32, wr: 0.278, dream: true, seatBy: 0.45, seatZ: 0.36 };   // the real seat is higher and longer: the rider sits on its rear part
 const bike = { ...buildBikeModel(), x: 21.3, z: 9, h: 0, v: 0, steer: 0, spin: 0, ...BIKE_CFG, slot: [21.3, 9], active: true };
 const fleet = [car, bike]; car.key = 0; bike.key = 1;
 const allVeh = () => fleet;
@@ -831,9 +1314,9 @@ function carStep(v, dt) {
   P.x = v.x; P.z = v.z; P.y = 0; P.vy = 0; vx = vz = 0;
   const sn = Math.sin(v.h), cs = Math.cos(v.h), tps = camMode === 'tps';
   if (v.bike) {
-    bikeSeat.x = v.x - sn * 0.3; bikeSeat.z = v.z - cs * 0.3; bikeSeat.yaw = v.h - Math.PI;
-    camera.position.set(v.x - (tps ? 0 : sn * 0.3), tps ? 1.5 : 1.5, v.z - (tps ? 0 : cs * 0.3));
-  } else camera.position.set(v.x + (tps ? 0 : cs * 0.4 + sn * 0.1), tps ? 1.6 : 1.15, v.z + (tps ? 0 : -sn * 0.4 + cs * 0.1));
+    const sz = v.seatZ ?? 0.3; bikeSeat.x = v.x - sn * sz; bikeSeat.z = v.z - cs * sz; bikeSeat.yaw = v.h - Math.PI; bikeSeat.by = v.seatBy ?? 0.28; bikeSeat.dream = !!v.dream;
+    camera.position.set(v.x - (tps ? 0 : sn * 0.3), 1.5 + (v.seatBy ? v.seatBy - 0.28 : 0), v.z - (tps ? 0 : cs * 0.3));
+  } else camera.position.set(v.x + (tps ? 0 : cs * 0.4 + sn * 0.1), tps ? 1.6 + (v.eyeH ? 0.6 : 0) : (v.eyeH || 1.15), v.z + (tps ? 0 : -sn * 0.4 + cs * 0.1));
   $('speed').textContent = Math.round(Math.abs(v.v) * 3.6) + ' km/h · ⛽ ' + Math.round(v.fuel * 100) + '%';
 }
 
@@ -882,15 +1365,11 @@ function startHug() {
   if (!canHug()) return;
   const p = other.getPose(), dx = p.x - P.x, dz = p.z - P.z, d = Math.hypot(dx, dz) || 1;
   hug = { t: 0, ang: Math.atan2(dx, dz), camYaw: Math.atan2(-dx, -dz) };
-  other.hug(P.x + dx / d * 0.42, P.z + dz / d * 0.42, hug.ang + Math.PI, 5);   // the AI steps in close; both embrace for 5 s
+  other.hug(P.x + dx / d * 0.38, P.z + dz / d * 0.38, hug.ang + Math.PI, 5);   // the AI steps in close; both embrace for 5 s
   vx = vz = 0;
 }
-function hugStep(dt) { // player is frozen, camera turns toward the partner
+function hugStep(dt) { // player is frozen; the camera is left alone so the view never swings during the hug
   hug.t += dt; vx = vz = 0; jumpReq = false;
-  if (hug.t < 0.6) { // only the first moments turn the view toward the partner; after that you can look around freely
-    let df = hug.camYaw - camera.rotation.y; df = Math.atan2(Math.sin(df), Math.cos(df));
-    camera.rotation.y += df * Math.min(1, dt * 5); camera.rotation.x += (0 - camera.rotation.x) * Math.min(1, dt * 3);
-  }
   camera.position.set(P.x, eyeY, P.z);
   if (hug.t >= 5) hug = null;
 }
@@ -1024,6 +1503,113 @@ function shopStep(dt) {
 const gasClerk = createCharacter({ ...common, kind: 'girl', name: 'Cashier', look: pick(LOOKS.girl), at: [125.3, 102.6] });
 gasClerk.script([{ x: 125.3, z: 102.6, face: -Math.PI / 2, tag: 'Cashier ⛽', until: () => false }], () => {});
 
+/* ================= FRUIT ROAD (the z = 60 side road continues east) + FRUIT SHOP ================= */
+const FRUIT = { x: 152, z: 41, price: 250 };      // the fruit BUYING point (left of the shop as seen from the road)
+{
+  const X0 = 56, X1 = 141, CX = (X0 + X1) / 2, LEN = X1 - X0, RED = 0xd62828, WH = 0xf4f1ea;
+  box(CX, 0, 60, LEN, 0.03, 6, ASPH, false, false);                                                     // road x 56 .. 141
+  for (let x = X0 + 2; x < X1 - 1; x += 4) box(x, 0.035, 60, 1.8, 0.01, 0.15, WHITE, false, false);
+  for (const sg of [-1, 1]) box(CX, 0, 60 + sg * 3.7, LEN, 0.06, 1.4, 0xbdb8ae, false, false);
+  for (let x = 68, i = 0; x < X1 - 6; x += 16, i++) {                                                   // street lamps
+    const sz = i % 2 ? 55.2 : 64.8, dir = sz > 60 ? -1 : 1;
+    box(x, 0, sz, 0.12, 4.2, 0.12, DARK); box(x, 4.1, sz + dir * 0.5, 0.12, 0.1, 1.1, DARK, false);
+    box(x, 4.0, sz + dir * 0.9, 0.25, 0.12, 0.35, new THREE.MeshBasicMaterial({ color: 0xfff2c0 }), false, false);
+  }
+  for (let x = 62; x < X1 - 8; x += 12) { tree(x, 51.5, 1); tree(x + 6, 68.5, 1.05); }
+  box(156, 0, 60, 36, 0.015, 28, 0xcfc8bb, false, false);                                               // plaza x 138 .. 174
+  // ---- the shop: open front with a striped awning, back + side walls, display tables of fruit ----
+  const SW = M(0xf3e6c8, 0.8);
+  box(153, 0, 60, 14, 0.05, 18, repMat(woodTex, 7, 9), false, false);                                   // wooden floor x 146 .. 160
+  wall('x', 51, 146, 160, [win(153, 3, 0.9, 2.2)], 0, SW); wall('x', 69, 146, 160, [win(153, 3, 0.9, 2.2)], 0, SW);
+  wall('z', 160, 51, 69, [win(55, 3, 0.9, 2.2), win(65, 3, 0.9, 2.2)], 0, SW);
+  box(152.5, 3.0, 60, 19, 0.3, 20, M(0x7a4a2b, 0.7), false);                                            // roof x 143 .. 162
+  for (const pz of [51.3, 56, 60, 64, 68.7]) box(143.4, 0, pz, 0.14, 3.0, 0.14, DARK);                  // awning posts
+  for (let i = 0; i < 10; i++) box(144.3, 2.62, 51.9 + i * 1.8, 2.8, 0.1, 1.8, i % 2 ? WH : RED, false, false);   // striped awning
+  const tx = labelTex([['🍉 FRUIT SHOP', 58, 46], ['ហាងលក់ផ្លែឈើស្រស់ៗ', 40, 96]], 512, 128, '#14532d', '#ffffff');
+  box(142.6, 3.05, 60, 0.14, 1.1, 9, [DARK, new THREE.MeshBasicMaterial({ map: tx }), DARK, DARK, DARK, DARK], false);   // sign facing the road (-x face)
+  for (const tz of [54, 60, 66]) box(149, 0, tz, 1.3, 0.8, 4.6, M(0x9a6b3c, 0.8));                       // display tables
+  box(156, 0, 60, 1.0, 1.0, 6, M(0x5b3b22, 0.7)); box(156, 1.0, 60, 1.1, 0.06, 6.2, M(0xd8c9a8, 0.6), false);   // counter
+  box(156, 1.06, 58.6, 0.4, 0.25, 0.4, DARK, false);                                                     // cash register
+  for (const cz of [54, 66]) for (let i = 0; i < 2; i++) box(159.2, i * 0.5, cz + (i ? 0.3 : 0), 1.0, 0.5, 2.2, M(0xb98a5a, 0.8));   // crates against the back wall
+  // ---- fruit buying booth (ទទួលទិញផ្លែឈើ) on the left of the shop: x 146..160, z 34..46 ----
+  box(156, 0, 39, 36, 0.015, 14, 0xcfc8bb, false, false);                                               // plaza extension z 32 .. 46
+  box(153, 0, 40, 14, 0.05, 12, repMat(woodTex, 7, 6), false, false);
+  wall('z', 160, 34, 46, [win(40, 3, 0.9, 2.2)], 0, SW); wall('x', 34, 146, 160, [win(153, 3, 0.9, 2.2)], 0, SW); wall('x', 46, 146, 160, [win(153, 3, 0.9, 2.2)], 0, SW);
+  box(152.5, 3.0, 40, 19, 0.3, 14, M(0x1e4b7a, 0.7), false);                                              // blue roof
+  for (const pz of [33.4, 37, 40, 43, 46.6]) box(143.4, 0, pz, 0.14, 3.0, 0.14, DARK);
+  for (let i = 0; i < 7; i++) box(144.3, 2.62, 34.2 + i * 1.75, 2.8, 0.1, 1.75, i % 2 ? WH : 0x2563eb, false, false);   // blue/white awning
+  const tb = labelTex([['⚖ ទទួលទិញផ្លែឈើ', 50, 44], ['BUYING FRUIT · ចេក $2.50/ស្និត', 34, 96]], 512, 128, '#1e3a8a', '#ffffff');
+  box(142.6, 3.05, 40, 0.14, 1.1, 8, [DARK, new THREE.MeshBasicMaterial({ map: tb }), DARK, DARK, DARK, DARK], false);
+  box(150, 0, 40, 1.0, 1.0, 6, M(0x5b3b22, 0.7)); box(150, 1.0, 40, 1.1, 0.06, 6.2, M(0xd8c9a8, 0.6), false);   // buying counter
+  box(150, 1.06, 38.2, 0.7, 0.05, 0.7, 0x888d94, false); box(150, 1.11, 38.2, 0.12, 0.3, 0.12, 0x555a61, false); box(150, 1.4, 38.2, 0.6, 0.05, 0.4, 0xdddddd, false);   // scale
+  for (let i = 0; i < 6; i++) box(158.8, (i % 2) * 0.5, 36 + (i >> 1) * 2.4, 1.0, 0.5, 2.0, M(0xb98a5a, 0.8));   // empty crates for the fruit bought
+  // all the fruit as ONE vertex-coloured mesh (cheap on phones)
+  const P = [], N = [], C = [], m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler(), v = new THREE.Vector3(), sv = new THREE.Vector3(), cl = new THREE.Color();
+  const SPH = new THREE.SphereGeometry(0.5, 8, 6), CAP = new THREE.CapsuleGeometry(0.03, 0.14, 2, 6);
+  const add = (geo, hex, x, y, z, sx, sy, sz, rz = 0) => {
+    eu.set(0, 0, rz); q.setFromEuler(eu); m4.compose(v.set(x, y, z), q, sv.set(sx, sy, sz));
+    let g = geo.clone(); if (g.index) g = g.toNonIndexed(); g.applyMatrix4(m4); cl.set(hex);
+    const p = g.attributes.position.array, n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i++) { P.push(p[i]); N.push(n[i]); } for (let i = 0; i < p.length / 3; i++) C.push(cl.r, cl.g, cl.b);
+  };
+  const pile = (tz, kinds) => kinds.forEach(([hex, r, ox, oz, nx, nz, sy, y0]) => {                         // grid of round fruit
+    for (let a = 0; a < nx; a++) for (let b = 0; b < nz; b++) add(SPH, hex, 149 + ox + (a - (nx - 1) / 2) * r * 1.15, 0.8 + (y0 || 0) + r / 2, tz + oz + (b - (nz - 1) / 2) * r * 1.15, r, r * (sy || 1), r);
+  });
+  pile(54, [[0xff8c1a, 0.17, -0.3, -1.4, 3, 4], [0xd62828, 0.15, -0.3, 0, 3, 4], [0x8bc34a, 0.15, -0.3, 1.4, 3, 4]]);                // oranges / apples / limes
+  pile(60, [[0x2e7d32, 0.5, 0, -1.4, 1, 3, 0.85], [0xf4d03f, 0.2, 0, 0.3, 2, 3, 1.2], [0xe91e63, 0.18, 0, 1.5, 2, 3, 1.1]]);            // watermelons / pineapples-ish / dragon fruit
+  pile(66, [[0xffc107, 0.2, -0.3, -1.4, 3, 3, 1.15], [0x7b1fa2, 0.12, -0.3, 0, 3, 5], [0xff7043, 0.18, -0.3, 1.4, 3, 3, 1.1]]);       // mangoes / grapes / papayas
+  for (let i = 0; i < 8; i++) add(CAP, 0xf1c40f, 156.1, 1.2 + (i % 2) * 0.02, 57.9 + i * 0.5, 1.8, 1.8, 1.8, Math.PI / 2 + ((i % 3) - 1) * 0.2);   // bananas on the counter
+  for (const cz of [54, 66]) { pile0(cz); }
+  function pile0(cz) { for (let a = 0; a < 2; a++) for (let b = 0; b < 4; b++) { add(SPH, 0xd62828, 159.2 + (a - 0.5) * 0.3, 0.55 + 0.2, cz - 0.8 + b * 0.5, 0.26, 0.26, 0.26); add(SPH, 0xff8c1a, 159.2 + (a - 0.5) * 0.3, 1.05 + 0.2, cz - 0.8 + b * 0.5 + 0.3, 0.26, 0.26, 0.26); } }
+  const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); fg.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); fg.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+  scene.add(new THREE.Mesh(fg, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 })));
+}
+const SELL_C = { x: 140.5, z: 41, r: 1.8 };                                 // red circle in front of the buying booth: park the loaded cart inside it
+{ const red = new THREE.Mesh(new THREE.CylinderGeometry(SELL_C.r, SELL_C.r, 0.02, 32), new THREE.MeshBasicMaterial({ color: 0xd62828 })), inn = new THREE.Mesh(new THREE.CylinderGeometry(SELL_C.r - 0.22, SELL_C.r - 0.22, 0.02, 32), new THREE.MeshBasicMaterial({ color: 0xe8e2d4 }));
+  red.position.set(SELL_C.x, 0.03, SELL_C.z); inn.position.set(SELL_C.x, 0.045, SELL_C.z); scene.add(red, inn); }
+const cartInCircle = () => Math.hypot(cartObj.g.position.x - SELL_C.x, cartObj.g.position.z - SELL_C.z) < SELL_C.r;
+const inCircle = (x, z, r) => Math.hypot(x - SELL_C.x, z - SELL_C.z) < r;
+const sellLoads = () => { const L = []; if (cartLoad.length && cartInCircle()) L.push(cartLoad); trucks().forEach(v => { if (v.load.length && inCircle(v.x, v.z, SELL_C.r + 0.6)) L.push(v.load); }); return L; };
+const totalLoad = () => cartLoad.length + trucks().reduce((a, v) => a + v.load.length, 0);
+const nearFruitShop = () => Math.hypot(P.x - SELL_C.x, P.z - SELL_C.z) < 8 && sellLoads().length > 0;
+const needCircle = () => totalLoad() > 0 && cartFree() && Math.hypot(P.x - SELL_C.x, P.z - SELL_C.z) < 9 && sellLoads().length === 0;
+const canSellFruit = () => cartFree() && nearFruitShop();
+const sellCount = () => sellLoads().reduce((a, l) => a + l.length, 0);
+function fruitSell() {                                                   // sell every banana bunch on the cart / truck standing inside the red circle
+  if (!canSellFruit()) return false;
+  let n = 0; sellLoads().forEach(l => { n += l.length; l.forEach(b => b.removeFromParent()); l.length = 0; });
+  save.money += n * FRUIT.price; saveGame(); updateMoney(true); toast('🍌 លក់ចេក ' + n + ' ស្និត +' + fmt(n * FRUIT.price)); return true;
+}
+
+/* ---- fruit shop + buying booth: a seller behind each counter, customers walking in and out ---- */
+const fr = { sellers: null, bots: [], nextShop: 3, nextBuy: 8 };
+function frSpawn(kindShop) {
+  const kind = Math.random() < 0.5 ? 'girl' : 'boy', c = createCharacter({ ...common, kind, name: pick(NAMES[kind]), look: pick(LOOKS[kind]), at: kindShop ? [136, 57] : [136, 56.8] });
+  fr.bots.push(c); const pts = [];
+  if (kindShop) {                                                          // browse the tables, pay at the counter, leave
+    const tz = pick([54, 60, 66]), tz2 = pick([54, 60, 66]), via = z => z < 59 ? 57 : 63;
+    pts.push({ x: 146, z: 57 });
+    pts.push({ x: 147.3, z: via(tz) }, { x: 147.3, z: tz, face: Math.PI / 2, wait: 3 + Math.random() * 4, tag: 'ជ្រើសរើសផ្លែឈើ 🍊' });
+    if (tz2 !== tz) pts.push({ x: 147.3, z: via(tz2) }, { x: 147.3, z: tz2, face: Math.PI / 2, wait: 2 + Math.random() * 3, tag: 'ជ្រើសរើសផ្លែឈើ 🍎' });
+    pts.push({ x: 147.3, z: 57 }, { x: 154.3, z: 57 }, { x: 154.4, z: 60, face: Math.PI / 2, wait: 3, tag: 'ទិញផ្លែឈើ 🍉' }, { x: 154.3, z: 57 }, { x: 147.3, z: 57 }, { x: 138, z: 57 }, { x: 132, z: 57 });
+  } else {                                                                 // walk up to the buying counter with a basket of fruit, sell it, leave
+    pts.push({ x: 140, z: 48 }, { x: 146, z: 41.5 }, { x: 148.4, z: 41.5, face: Math.PI / 2, wait: 3.5 + Math.random() * 3, tag: 'លក់ផ្លែឈើ 🍌' }, { x: 146, z: 41.5 }, { x: 140, z: 48 }, { x: 134, z: 56.8 });
+  }
+  c.script(pts, () => { c.dispose(); fr.bots.splice(fr.bots.indexOf(c), 1); });
+}
+function fruitStep(dt) {
+  fr.bots.forEach(c => c.update(dt));
+  if (fr.sellers) fr.sellers.forEach(c => c.update(dt));
+  if (Math.hypot(P.x - 150, P.z - 50) > 150) return;
+  if (!fr.sellers) {
+    const mk = (x, z, tag) => { const c = createCharacter({ ...common, kind: 'girl', name: 'Seller', look: pick(LOOKS.girl), at: [x, z] }); c.script([{ x, z, face: -Math.PI / 2, tag, until: () => false }], () => {}); return c; };
+    fr.sellers = [mk(157.4, 60, 'អ្នកលក់ 🍉'), mk(151.4, 40, 'អ្នកទិញផ្លែឈើ ⚖')];
+  }
+  fr.nextShop -= dt; fr.nextBuy -= dt;
+  const nb = fr.bots.length;
+  if (fr.nextShop <= 0) { fr.nextShop = 9 + Math.random() * 9; if (nb < 5) frSpawn(true); }
+  if (fr.nextBuy <= 0) { fr.nextBuy = 14 + Math.random() * 12; if (nb < 5) frSpawn(false); }
+}
 /* ================= POOL HALL BOTS ================= */
 const hall = { seeded: false, next: 4, bots: [] };
 const hallDoor = doors.find(d => Math.abs(d.pos.x + 176) < 0.3 && Math.abs(d.pos.z - 84) < 0.3);
@@ -1115,27 +1701,28 @@ function spawnBartender() {
 }
 /* ---- car & moto shop: buy a vehicle (Buy -> Car/Moto -> pick -> confirm) ---- */
 const CATALOG = {
-  car: [{ name: 'ឡានខៀវ', col: 0x1d6fb8, price: 12000 }, { name: 'ឡានលឿង', col: 0xe9c46a, price: 15000 }, { name: 'ឡានបៃតង', col: 0x2a9d8f, price: 18000 }, { name: 'ឡានក្រហម', col: 0xb02a2a, price: 22000 }],
-  bike: [{ name: 'ម៉ូតូក្រហម', col: 0xc0392b, price: 6000 }, { name: 'ម៉ូតូខៀវ', col: 0x2563eb, price: 7000 }, { name: 'ម៉ូតូបៃតង', col: 0x2f9e44, price: 8000 }, { name: 'ម៉ូតូទឹកក្រូច', col: 0xf08c00, price: 10000 }],
+  car: [{ name: 'ឡានខៀវ', col: 0x1d6fb8, price: 12000 }, { name: 'ឡានលឿង', col: 0xe9c46a, price: 15000 }, { name: 'ឡានបៃតង', col: 0x2a9d8f, price: 18000 }, { name: 'ឡានក្រហម', col: 0xb02a2a, price: 22000 }, { name: 'Ford Raptor F-150', col: 0x0d0d10, price: 45000, model: 'raptor', img: raptorImg }],
+  bike: [{ name: 'ម៉ូតូក្រហម', col: 0xc0392b, price: 6000 }, { name: 'ម៉ូតូខៀវ', col: 0x2563eb, price: 7000 }, { name: 'ម៉ូតូបៃតង', col: 0x2f9e44, price: 8000 }, { name: 'ម៉ូតូទឹកក្រូច', col: 0xf08c00, price: 10000 }, { name: 'Honda Dream 2027', col: 0x15161a, price: 25000, model: 'dream', img: dreamImg }],
 };
 const CAR_SLOTS = [[15.6, 4.6], [20.4, 4.6], [15.6, 9.8], [20.4, 9.8], [15.6, 17.6], [20.4, 17.6]];      // neat rows in the home parking lot (between the painted lines)
 const BIKE_SLOTS = [[14.2, 13.2], [15.8, 13.2], [17.4, 13.2], [19.0, 13.2], [20.6, 13.2], [22.2, 13.2]];
-function addVeh(kind, col, n) {   // a bought vehicle (n = how many of this kind we already have -> its parking spot)
+function addVeh(kind, col, n, model) {   // a bought vehicle (n = how many of this kind we already have -> its parking spot)
   const slots = kind === 'car' ? CAR_SLOTS : BIKE_SLOTS, s = slots[n % slots.length];
-  const v = { ...(kind === 'car' ? buildCarModel(col) : buildBikeModel(col)), x: s[0], z: s[1], h: 0, v: 0, steer: 0, spin: 0, ...(kind === 'car' ? CAR_CFG : BIKE_CFG), slot: s, active: true, key: fleet.length };
+  const tk = kind === 'car' && model === 'raptor', dr = kind === 'bike' && model === 'dream' && !!HONDA;
+  const v = { ...(tk ? buildTruckModel(col, true) : kind === 'car' ? buildCarModel(col) : buildBikeModel(col, model, true)), x: s[0], z: s[1], h: 0, v: 0, steer: 0, spin: 0, ...(tk ? TRUCK_CFG : kind === 'car' ? CAR_CFG : dr ? DREAM_CFG : BIKE_CFG), slot: s, active: true, key: fleet.length, truck: tk, load: [] };
   fleet.push(v); return v;
 }
 if (!save.fleet) { save.fleet = []; if (save.carB != null) save.fleet.push({ kind: 'car', col: save.carB }); if (save.bikeB != null) save.fleet.push({ kind: 'bike', col: save.bikeB }); }
-save.fleet.forEach(f => addVeh(f.kind, f.col, fleet.filter(v => !!v.bike === (f.kind === 'bike')).length));     // vehicles bought earlier
+save.fleet.forEach(f => addVeh(f.kind, f.col, fleet.filter(v => !!v.bike === (f.kind === 'bike')).length, f.model));     // vehicles bought earlier
 // every time the game starts, ALL our vehicles (the originals and every one we bought) line up in the parking lot, wherever we left them
 { let ci = 0, bi = 0; fleet.forEach(v => { const s = v.bike ? BIKE_SLOTS[bi++ % BIKE_SLOTS.length] : CAR_SLOTS[ci++ % CAR_SLOTS.length]; v.slot = s; Object.assign(v, { x: s[0], z: s[1], h: 0, v: 0, steer: 0 }); }); }
 { let sf = null; try { sf = JSON.parse(localStorage.getItem(FUEL_KEY) || 'null'); } catch (e) {} if (!Array.isArray(sf)) sf = save.fuel;
   if (Array.isArray(sf)) fleet.forEach((v, i) => { if (typeof sf[i] === 'number') v.fuel = Math.max(0, Math.min(1, sf[i])); }); }   // saved fuel levels
-function deliver(kind, col) {   // the new vehicle appears at the shop; the one we rode there goes back home
+function deliver(kind, col, model) {   // the new vehicle appears at the shop; the one we rode there goes back home
   const same = fleet.filter(v => !!v.bike === (kind === 'bike'));
   const oldV = same.reduce((b, v) => Math.hypot(P.x - v.x, P.z - v.z) < Math.hypot(P.x - b.x, P.z - b.z) ? v : b, same[0]);
-  const newV = addVeh(kind, col, same.length);
-  save.fleet.push({ kind, col });
+  const newV = addVeh(kind, col, same.length, model);
+  save.fleet.push({ kind, col, model });
   Object.assign(newV, { x: -142.2, z: kind === 'car' ? -57 : -66.5, h: 0, v: 0, steer: 0 });
   Object.assign(oldV, { x: oldV.slot[0], z: oldV.slot[1], h: 0, v: 0, steer: 0 });
   return newV;
@@ -1147,22 +1734,44 @@ const buyPanel = document.createElement('div'); buyPanel.id = 'buyPanel'; docume
 const hex = c => '#' + c.toString(16).padStart(6, '0');
 const svgCar = c => `<svg viewBox="0 0 120 56"><rect x="6" y="24" width="108" height="20" rx="7" fill="${hex(c)}"/><path d="M28 24 L40 8 H82 L96 24Z" fill="${hex(c)}"/><path d="M36 24 L44 12 H60 V24Z M64 24 V12 H80 L90 24Z" fill="#9fd0ff"/><circle cx="30" cy="44" r="9" fill="#222"/><circle cx="90" cy="44" r="9" fill="#222"/><circle cx="30" cy="44" r="3.5" fill="#ccc"/><circle cx="90" cy="44" r="3.5" fill="#ccc"/></svg>`;
 const svgBike = c => `<svg viewBox="0 0 120 56"><circle cx="24" cy="40" r="12" fill="none" stroke="#222" stroke-width="5"/><circle cx="96" cy="40" r="12" fill="none" stroke="#222" stroke-width="5"/><path d="M24 40 L48 40 L60 22 L84 22 L96 40" fill="none" stroke="${hex(c)}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><rect x="36" y="14" width="30" height="8" rx="4" fill="#111"/><path d="M88 22 L84 8 H98" fill="none" stroke="#222" stroke-width="4" stroke-linecap="round"/></svg>`;
+const vpic = (kind, it) => it.img ? `<img src="${it.img}" style="width:100%;border-radius:8px;display:block">` : kind === 'car' ? svgCar(it.col) : svgBike(it.col);
 function buyView(step, kind, item) {
   const x = '<button class="bx" data-a="close">✕</button>';
   if (step === 'type') buyPanel.innerHTML = `<div class="bcard">${x}<h2>🛒 ទិញ</h2><p>លុយរបស់អ្នក៖ ${fmt(save.money)}</p><div class="brow"><button class="bbig" data-a="kind" data-k="car">🚗<br>ឡាន</button><button class="bbig" data-a="kind" data-k="bike">🏍<br>ម៉ូតូ</button></div></div>`;
-  else if (step === 'list') buyPanel.innerHTML = `<div class="bcard">${x}<h2>${kind === 'car' ? '🚗 ឡាន' : '🏍 ម៉ូតូ'}</h2><p>លុយរបស់អ្នក៖ ${fmt(save.money)}</p><div class="bgrid">${CATALOG[kind].map((it, i) => `<button class="bitem" data-a="pick" data-k="${kind}" data-i="${i}">${kind === 'car' ? svgCar(it.col) : svgBike(it.col)}<b>${it.name}</b><span>${fmt(it.price)}</span></button>`).join('')}</div><button class="bback" data-a="type">← ត្រឡប់ក្រោយ</button></div>`;
-  else if (step === 'confirm') buyPanel.innerHTML = `<div class="bcard">${x}<h2>បញ្ជាក់ការទិញ</h2><div class="bpre">${kind === 'car' ? svgCar(item.col) : svgBike(item.col)}</div><p>ទិញ <b>${item.name}</b> ក្នុងតម្លៃ <b>${fmt(item.price)}</b> មែនទេ?</p><p class="bsmall">លុយនៅសល់ក្រោយទិញ៖ ${fmt(Math.max(0, save.money - item.price))}</p><div class="brow"><button class="byes" data-a="yes" data-k="${kind}" data-i="${CATALOG[kind].indexOf(item)}">✔ យល់ព្រម</button><button class="bno" data-a="list" data-k="${kind}">✖ បោះបង់</button></div></div>`;
+  else if (step === 'list') buyPanel.innerHTML = `<div class="bcard">${x}<h2>${kind === 'car' ? '🚗 ឡាន' : '🏍 ម៉ូតូ'}</h2><p>លុយរបស់អ្នក៖ ${fmt(save.money)}</p><div class="bgrid">${CATALOG[kind].map((it, i) => `<button class="bitem" data-a="pick" data-k="${kind}" data-i="${i}">${vpic(kind, it)}<b>${it.name}</b><span>${fmt(it.price)}</span></button>`).join('')}</div><button class="bback" data-a="type">← ត្រឡប់ក្រោយ</button></div>`;
+  else if (step === 'confirm') buyPanel.innerHTML = `<div class="bcard">${x}<h2>បញ្ជាក់ការទិញ</h2><div class="bpre">${vpic(kind, item)}</div><p>ទិញ <b>${item.name}</b> ក្នុងតម្លៃ <b>${fmt(item.price)}</b> មែនទេ?</p><p class="bsmall">លុយនៅសល់ក្រោយទិញ៖ ${fmt(Math.max(0, save.money - item.price))}</p><div class="brow"><button class="byes" data-a="yes" data-k="${kind}" data-i="${CATALOG[kind].indexOf(item)}">✔ យល់ព្រម</button><button class="bno" data-a="list" data-k="${kind}">✖ បោះបង់</button></div></div>`;
 }
+/* ---- wardrobe: press Use near any wardrobe to open it, then change Ny Ny's / G1 G1's outfit (saved) ---- */
+const nearWardrobe = () => {
+  if (driving || seat || hug || swimming || buyOpen || phoneOpen) return null;
+  for (const w of WARDROBES) { if (Math.abs(P.y - w.by) > 1.3) continue; const dx = Math.max(Math.abs(P.x - w.x) - w.w / 2, 0), dz = Math.max(Math.abs(P.z - w.z) - w.d / 2, 0); if (Math.hypot(dx, dz) < 1.3) return w; }
+  return null;
+};
+const OUTFITS = { girl: { char: () => girl, label: '👧 Ny Ny', list: () => [MODELS.girl, MODELS.girl2, MODELS.girl3], h: 1.66 }, boy: { char: () => boy, label: '👦 G1 G1', list: () => [MODELS.boy, MODELS.boy2, MODELS.boy3], h: 1.78 } };
+const outfitNow = {};
+function applyOutfit(k, n, silent) {
+  const o = OUTFITS[k], m = o.list()[n]; if (!m) { if (!silent) toast('ឈុតនេះផ្ទុកមិនបាន'); return false; }
+  const scene = SkeletonUtils.clone(m.scene);   // the loaded scenes stay untouched, so every swap starts from a clean rest pose
+  if (!o.char().setOutfit({ scene, height: o.h })) return false;
+  outfitNow[k] = n; save.outfit = { ...(save.outfit || {}), [k]: n }; if (!silent) saveGame(); return true;
+}
+function wardView() {
+  const x = '<button class="bx" data-a="close">✕</button>', row = k => { const n = outfitNow[k] ?? (save.outfit?.[k] || 0); return `<button class="bbig" data-a="outfit" data-k="${k}">${OUTFITS[k].label}<br><span style="font-size:14px;font-weight:600">ឈុត ${n + 1} → ឈុត ${(n + 1) % OUTFITS[k].list().length + 1}</span></button>`; };
+  buyPanel.innerHTML = `<div class="bcard">${x}<h2>👗 ទូខោអាវ</h2><p>ចុចដើម្បីប្តូរឈុតខោអាវ</p><div class="brow">${row('girl')}${row('boy')}</div></div>`;
+}
+function openWard() { if (buyOpen || !nearWardrobe()) return; buyOpen = true; running = false; if (!mobile) controls.unlock(); wardView(); buyPanel.classList.add('show'); }
+for (const k of ['girl', 'boy']) if (save.outfit?.[k]) applyOutfit(k, save.outfit[k], true);   // restore the saved outfits
 function openBuy() { if (buyOpen || !canBuy()) return; buyOpen = true; running = false; if (!mobile) controls.unlock(); buyView('type'); buyPanel.classList.add('show'); }
 function closeBuy() { if (!buyOpen) return; buyOpen = false; buyPanel.classList.remove('show'); if (mobile) running = true; else controls.lock(); }
 function doBuy(kind, i) {
   const it = CATALOG[kind][i];
   if (save.money < it.price) { toast('លុយមិនគ្រប់ទេ 💸'); buyView('list', kind); return; }
-  save.money -= it.price; deliver(kind, it.col);
+  save.money -= it.price; deliver(kind, it.col, it.model);
   saveGame(); updateMoney(true); closeBuy(); toast('ទិញ ' + it.name + ' បានជោគជ័យ 🎉 (នៅមុខហាង · យានចាស់ត្រឡប់ទៅផ្ទះ)');
 }
 buyPanel.addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return; const a = b.dataset.a, k = b.dataset.k, i = +b.dataset.i;
+  if (a === 'outfit') { const cur = outfitNow[k] ?? (save.outfit?.[k] || 0); if (applyOutfit(k, (cur + 1) % OUTFITS[k].list().length)) toast('👗 ប្តូរឈុត ' + OUTFITS[k].label.slice(3) + ' រួចរាល់'); wardView(); return; }
   if (a === 'close') closeBuy(); else if (a === 'kind' || a === 'list') buyView('list', k);
   else if (a === 'type') buyView('type'); else if (a === 'pick') buyView('confirm', k, CATALOG[k][i]); else if (a === 'yes') doBuy(k, i);
 });
@@ -1319,6 +1928,7 @@ function shopRoomStep(dt) {
   if (shw.next <= 0) { shw.next = 12 + Math.random() * 10; if (shw.bots.length < 4) spawnBuyer(); }
 }
 function poolStep(dt) {
+  fruitStep(dt);
   shopRoomStep(dt);
   gasClerk.update(dt);
   POOLS.forEach(T => T.step(dt));
@@ -1449,7 +2059,39 @@ function makeCan(col) {
   g.traverse(o => { if (o.isMesh) o.castShadow = true; }); return g;
 }
 /* ================= NEWBORN BABY on the blue bed: tiny wiggling hands and feet, can be carried and put back on any bed ================= */
+function makeBabyGLB() {   // rigged 3D newborn lying on its back; the invisible puppet below is animated by the same code as the built-in baby
+  const group = new THREE.Group(), holder = new THREE.Group(), outer = new THREE.Group(), inner = new THREE.Group();
+  holder.position.set(0, 0.085, -0.234); outer.rotation.y = Math.PI; inner.rotation.x = -Math.PI / 2;
+  const rig = createGlbRig(THREE, SkeletonUtils.clone(MODELS.baby.scene), { height: 0.5 });
+  let rig2 = null;   // same body with a crying face; shown instead of the calm one while the baby cries
+  if (MODELS.babyCry) { try { rig2 = createGlbRig(THREE, SkeletonUtils.clone(MODELS.babyCry.scene), { height: 0.5 }); rig2.root.visible = false; inner.add(rig2.root); rig2.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } }); } catch (e) { console.warn('crying baby not usable', e); rig2 = null; } }
+  inner.add(rig.root); outer.add(inner); holder.add(outer); group.add(holder);
+  rig.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  const mk = () => new THREE.Object3D();
+  const mkArm = () => { const o = mk(); o.userData.el = mk(); return o; }, mkLeg = () => { const o = mk(); o.userData.shin = mk(); return o; };
+  const torso = mk(), head = mk(), mouth = mk(), eyes = [], arms = [], legs = [];
+  for (const sx of [-1, 1]) {
+    const a = mk(); a.userData = { sx, ph: sx > 0 ? 0 : 1.7 }; arms.push(a);
+    const l = mk(); l.userData = { sx, ph: sx > 0 ? 0.9 : 2.6 }; legs.push(l);
+  }
+  const bubble = new THREE.Sprite(new THREE.SpriteMaterial({ map: babyBubbleTex(), transparent: true, depthTest: false })); bubble.scale.set(0.34, 0.34, 1); bubble.position.set(0, 0.52, 0.1); bubble.visible = false; bubble.renderOrder = 5; group.add(bubble);
+  const bubble2 = new THREE.Sprite(new THREE.SpriteMaterial({ map: babyToyTex(), transparent: true, depthTest: false })); bubble2.scale.set(0.34, 0.34, 1); bubble2.position.set(0, 0.52, 0.1); bubble2.visible = false; bubble2.renderOrder = 5; group.add(bubble2);
+  group.userData.mouthY = 0.15; group.userData.mouthZ = 0.165;
+  // puppet (lying frame: x right, y up, z toward the head)  ->  model frame (standing): (x,y,z) -> (-x, z, y)
+  const pArm = [mkArm(), mkArm()], pLeg = [mkLeg(), mkLeg()], pHead = mk(), grip = [true, true];
+  const conv = (src, dst) => { const q = src.quaternion; dst.quaternion.set(-q.x, q.z, q.y, q.w); };
+  const st = { dt: 0, t: 0, sf: 0, run: 0, swim: false, legs: pLeg, arms: pArm, head: pHead, grip };
+  const B = { group, torso, head, arms, legs, mouth, eyes, bubble, bubble2 };
+  B.sync = dt => {
+    for (const a of arms) { a.rotation.y = -a.rotation.y; a.rotation.x += 0.25; conv(a, pArm[a.userData.sx > 0 ? 0 : 1]); }   // swing the arms OUT (and slightly up) so they never fold into the chubby body
+    for (const l of legs) { const i = l.userData.sx > 0 ? 0 : 1; conv(l, pLeg[i]); pLeg[i].userData.shin.rotation.x = 0.3 + Math.max(0, pLeg[i].rotation.x) * 1.2; }
+    conv(head, pHead); st.dt = dt; st.t += dt;
+    const cry = !!rig2 && B.crying; rig.root.visible = !cry; if (rig2) rig2.root.visible = cry; (cry ? rig2 : rig).apply(st);
+  };
+  return B;
+}
 function makeBaby() {
+  if (MODELS.baby) { try { return makeBabyGLB(); } catch (e) { console.warn('3D baby not usable, keeping the built-in one', e); } }
   const group = new THREE.Group(), SK = M(0xf4c7a1, 0.7), ON = M(0xfff0b3, 0.9), DK = M(0x2b1d14, 0.8), PK = M(0xf29aa0, 0.7);
   const add = (par, geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; par.add(m); return m; };
   const torso = add(group, new THREE.CapsuleGeometry(0.075, 0.13, 4, 10), ON, 0, 0.078, -0.03); torso.rotation.x = Math.PI / 2;
@@ -1493,7 +2135,7 @@ function babyBubbleTex() {
 }
 const baby = { state: 'bed', bed: null, grp: makeBaby(), tp: makeBaby(), fp: makeBaby(), t: 0 };
 scene.add(baby.grp.group);
-baby.tp.group.position.set(-0.02, 1.16, 0.34); baby.tp.group.rotation.y = Math.PI / 2; baby.tp.group.scale.setScalar(1.1);   // cradled across the chest (third person)
+baby.tp.group.position.set(0, 1.12, 0.3); baby.tp.group.rotation.y = Math.PI / 2; baby.tp.group.scale.setScalar(1.1);   // cradled across the chest (third person)
 baby.fp.group.position.set(-0.22, -0.13, 0); baby.fp.group.rotation.y = Math.PI / 2; baby.fp.group.scale.setScalar(1.35);      // in front of the camera (first person)
 const babyHand = new THREE.Object3D();                       // invisible "held item" that raises the carrying arm
 function placeBaby(s) {
@@ -1553,7 +2195,7 @@ bear.model.position.set(BEAR_HOME.x, BEAR_HOME.y, BEAR_HOME.z); bear.model.rotat
 baby.wantP = false; baby.nextP = 25 + Math.random() * 60;
 let feed = null, play = null;
 placeBaby(cribs.find(c => c.by > 1) || spots.find(s => s.node === 'B3') || spots.find(s => s.type === 'sleep'));   // put the baby on its bed (after the bottle exists, because refreshHeld looks at both)
-const handsFree = () => !held && !drink && !eating && baby.state !== 'held' && bear.state !== 'held';
+const handsFree = () => !bunchHeld && !held && !drink && !eating && baby.state !== 'held' && bear.state !== 'held';
 const nearBear = () => !driving && !seat && !swimming && Math.abs(P.y - U) < 1.3 && Math.hypot(P.x - BEAR_HOME.x, P.z - BEAR_HOME.z) < 1.8;
 const nearHome = () => !driving && !seat && !swimming && Math.abs(P.y) < 1 && Math.hypot(P.x - BOTTLE_HOME.x, P.z - BOTTLE_HOME.z) < 1.7;
 const babyReach = () => baby.state === 'held' || (baby.state === 'bed' && Math.hypot(P.x - baby.grp.group.position.x, P.z - baby.grp.group.position.z) < 2.2 && Math.abs(P.y - baby.bed.by) < 1.3);
@@ -1583,7 +2225,7 @@ function cryUpdate(on, dist) {
 }
 function startFeed() {
   const hs = [], onBed = baby.state === 'bed', targets = onBed ? [baby.grp.group] : [baby.tp.group, baby.fp.group];
-  for (const tg of targets) { const h = new THREE.Group(), m = makeBottle(); m.position.y = -BOTTLE_H; h.add(m); h.position.set(0, 0.178, 0.125); h.rotation.x = 2.215; tg.add(h); hs.push([h, m.userData.milk]); }   // nipple at the baby's mouth
+  for (const tg of targets) { const h = new THREE.Group(), m = makeBottle(); m.position.y = -BOTTLE_H; h.add(m); h.position.set(0, tg.userData.mouthY ?? 0.178, tg.userData.mouthZ ?? 0.125); h.rotation.x = 2.215; tg.add(h); hs.push([h, m.userData.milk]); }   // nipple at the baby's mouth
   feed = { t: 0, dur: 6, hs }; bottle.state = 'feeding'; refreshHeld(); toast('🍼 កូនកំពុងបៅ... ❤️');
 }
 function endFeed(ok) {
@@ -1659,6 +2301,7 @@ function babyStep(dt) {
     B.eyes.forEach(e => e.scale.y = cry ? 3 : 1);
     B.bubble.visible = cry; B.bubble.position.y = 0.52 + Math.sin(t * 5) * 0.02;
     B.bubble2.visible = mode === 'calm' && baby.wantP; B.bubble2.position.y = 0.52 + Math.sin(t * 3) * 0.02;
+    B.crying = cry; if (B.sync) B.sync(dt);
   };
   if (baby.state === 'bed') anim(baby.grp); else { anim(baby.tp); anim(baby.fp); baby.grp.group.visible = false; }
   const nb = nearBaby(), bd = bedForBaby(), show = nb || !!bd;
@@ -1678,10 +2321,11 @@ function babyStep(dt) {
   bottleBtn.classList.toggle('show', !!bt); if (bt) bottleBtn.textContent = bt + (mobile ? '' : ' [L]');
 }
 function refreshHeld() { // show the carried bowl on the controlled character (third person) and in front of the camera (first person)
-  boy.setHold(null); girl.setHold(null); heldFP.clear(); heldFP.position.set(0.24, -0.3, -0.55); heldFP.rotation.set(0, 0, 0);
+  boy.setHold(null); girl.setHold(null); boy.setCradle(false); girl.setCradle(false); heldFP.clear(); heldFP.position.set(0.24, -0.3, -0.55); heldFP.rotation.set(0, 0, 0);
   baby.tp.group.removeFromParent();
-  if (baby.state === 'held') { me.group.add(baby.tp.group); me.setHold(babyHand); heldFP.add(baby.fp.group); return; }   // carrying the baby
+  if (baby.state === 'held') { me.group.add(baby.tp.group); me.setCradle(true); heldFP.add(baby.fp.group); return; }   // carrying the baby
   if (bottle.state === 'held' && !held && !drink) { me.setHold(makeBottle()); const bf = makeBottle(); bf.scale.setScalar(2.1); bf.position.y = -0.2; heldFP.add(bf); return; }   // carrying the milk bottle
+  if (bunchHeld) { me.setHold(makeBunch()); const bf = makeBunch(); bf.scale.setScalar(1.6); bf.position.y = -0.1; heldFP.add(bf); return; }   // carrying a chopped banana bunch
   if (bear.state === 'held' && !held && !drink) { me.setHold(makeBear()); const bf = makeBear(); bf.scale.setScalar(1.7); bf.position.y = -0.22; heldFP.add(bf); return; }   // carrying the teddy bear
   if (drink && !held) { me.setHold(makeCan(drink.col)); const c = makeCan(drink.col); c.scale.setScalar(2); heldFP.add(c); return; }
   if (!held) return;
@@ -1784,7 +2428,10 @@ const showMenu = (title, btn) => { $('menu').style.display = 'flex'; $('mt').tex
 const hideMenu = () => $('menu').style.display = 'none';
 controls.addEventListener('lock', () => { running = true; hideMenu(); });
 controls.addEventListener('unlock', () => { running = false; if (!buyOpen && phoneOpen !== 'unlocked') showMenu('Paused', 'Resume'); });
-$('play').onclick = () => mobile ? (running = true, hideMenu()) : controls.lock();
+$('play').onclick = () => {
+  try { const d = document, el = d.documentElement; if (!(d.fullscreenElement || d.webkitFullscreenElement)) { const p = (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el); p && p.catch && p.catch(() => {}); } } catch (e) { /* fullscreen not supported */ }   // Start Game goes full screen automatically
+  if (mobile) { running = true; hideMenu(); } else controls.lock();
+};
 $('pauseBtn').onclick = () => { running = false; showMenu('Paused', 'Resume'); };
 $('switchBtn').onclick = e => { switchChar(); e.currentTarget.blur(); };
 const setMode = m => { camMode = m; $('camFps').classList.toggle('on', m === 'fps'); $('camTps').classList.toggle('on', m === 'tps'); };
@@ -1821,7 +2468,7 @@ function joyMove(t) {
 joyEl.addEventListener('touchstart', e => { e.preventDefault(); joyId = e.changedTouches[0].identifier; joyMove(e.changedTouches[0]); }, { passive: false });
 document.addEventListener('touchstart', e => {
   if (!mobile || !running) return;
-  for (const t of e.changedTouches) if (lookId === null && !t.target.closest('#mobile,#switchBtn,#sitBtn,#cookBtn,#topleft,#settingsBtn,#settings,#buyBtn,#fuelBtn,#babyBtn,#bottleBtn,#bearBtn,#buyPanel,#phoneBtn,#phone')) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; tap = { x: t.clientX, y: t.clientY, t: performance.now() }; }
+  for (const t of e.changedTouches) if (lookId === null && !t.target.closest('#mobile,#switchBtn,#sitBtn,#cookBtn,#topleft,#settingsBtn,#settings,#buyBtn,#fuelBtn,#babyBtn,#bottleBtn,#bearBtn,#cartBtn,#buyPanel,#phoneBtn,#phone')) { lookId = t.identifier; lx = t.clientX; ly = t.clientY; tap = { x: t.clientX, y: t.clientY, t: performance.now() }; }
 }, { passive: false });
 document.addEventListener('touchmove', e => {
   if (!e.target.closest('#settings,#menu,#buyPanel,#phone')) e.preventDefault();  // allow scrolling inside menus
@@ -1850,7 +2497,9 @@ function nearestDoor() {
   return best;
 }
 function interact() {
+  if (bananaUse()) return;
   if (nearFridge()) { fridge.open = !fridge.open; return; }
+  if (nearWardrobe()) { openWard(); return; }
   const d = nearestDoor(); if (!d) return;
   if (d.open && Math.hypot(P.x - d.pos.x, P.z - d.pos.z) < 0.9) return; // don't close on the player
   d.open = !d.open;
@@ -1897,6 +2546,7 @@ function fuelStep(dt) {
 function update(dt) {
   swimming = false;
   allVeh().forEach(v => carStep(v, dt));
+  cartStep(dt); bananaStep(dt);
   if (driving) { /* camera + position handled in carStep */ } else if (seat) seatStep(dt); else if (hug) hugStep(dt); else {
   const wd = poolDepth(P.x, P.z, P.y), swimNow = wd > 1.05, wadeNow = wd > 0.05 && !swimNow; swimming = swimNow;   // in the pool?
   const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - joy.y;
@@ -1927,10 +2577,10 @@ function update(dt) {
     d.col.on = d.ang < 0.8;
   }
   eyePos.copy(camera.position);
-  girl.update(dt); boy.update(dt); babyStep(dt); shopStep(dt); aiDriveStep(dt); pcStep(dt); fridgeStep(dt); fuelStep(dt); poolStep(dt); cookStep(dt); eatingStep(dt);
+  girl.update(dt); boy.update(dt); dogStep(dt); babyStep(dt); shopStep(dt); aiDriveStep(dt); pcStep(dt); fridgeStep(dt); fuelStep(dt); poolStep(dt); cookStep(dt); eatingStep(dt);
   me.drive(dt, { x: P.x, y: P.y, z: P.z, vx, vz, seat: driving && dv.bike ? bikeSeat : seat, yaw: camera.rotation.y, swim: swimming, swimY: P.y + EYE - 0.4, eating: !!eating, hug: hug && { ang: hug.ang, e: Math.max(0, Math.min(1, hug.t / .6, (5 - hug.t) / .4)) } });
   const nc = nearVeh(), ns = driving || nc || seat || nearSpot(), sb = $('sitBtn');
-  sb.classList.toggle('show', !!ns);
+  sb.classList.toggle('show', !!ns); sb.classList.toggle('drv', !!driving);   // while driving the exit button moves up under the speed / fuel bar so it does not cover the vehicle
   if (ns) sb.textContent = (driving ? (dv.bike ? '🚪 Get off' : '🚪 Exit car') : nc ? (nc.bike ? '🏍 Ride' : '🚗 Drive') : seat ? '🧍 Stand up' : ns.type === 'sleep' ? '🛏 Sleep' : '🪑 Sit') + (mobile ? '' : ' [F]');
   const fb = $('followBtn'), cf = canFollow(); fb.classList.toggle('show', cf); if (cf) fb.textContent = 'តាមខ្ញុំ' + (mobile ? '' : ' [G]');
   const hb = $('hugBtn'), ch = canHug(); hb.classList.toggle('show', ch); if (ch) hb.textContent = 'ឱប' + (mobile ? '' : ' [H]');
@@ -1942,9 +2592,13 @@ function update(dt) {
   else if (held && nt) cookTxt = '🍽 ដាក់លើតុ';
   else if (np && np.state !== 'cooking' && !(held && np.state === 'done')) cookTxt = np.emoji + (np.state === 'done' ? ' ដួស' : ' ដាំ') + potWord(np);
   cb.classList.toggle('show', !!cookTxt); if (cookTxt) cb.textContent = cookTxt + (mobile ? '' : ' [R]');
-  const nd = nearestDoor(), nf = nearFridge();
-  $('prompt').classList.toggle('show', !!nd || nf);
-  if (nf) $('prompt').textContent = `Press E to ${fridge.open ? 'Close' : 'Open'} Fridge 🧊`; else if (nd) $('prompt').textContent = `Press E to ${nd.open ? 'Close' : 'Open'} Door`;
+  const nd = nearestDoor(), nf = nearFridge(), ab = aimBunch(), pb = canPutBunch(), ps = canSellFruit(), nc2 = needCircle(), pt = canPutTruck();
+  const nw = nearWardrobe();
+  $('prompt').classList.toggle('show', !!nd || nf || !!nw || !!ab || pb || ps || nc2 || pt);
+  if (nc2 && !ps && !ab && !pb) { $('prompt').textContent = '🛒 អូសរទេះ/បើកឡានចូលរង្វង់ក្រហម ដើម្បីលក់ចេក'; return; }
+  if (pt && !pb && !ps) { $('prompt').textContent = '🛻 ដាក់ចេកក្នុងឡាន — ' + (mobile ? 'ចុច Use' : 'ចុច E'); return; }
+  if (ab || pb || ps) { $('prompt').textContent = ps ? '🍌 លក់ចេកក្នុងរទេះ +' + fmt(sellCount() * FRUIT.price) + ' — ' + (mobile ? 'ចុច Use' : 'ចុច E') : pb ? 'ដាក់ចេកក្នុងរទេះ 🍌 — ' + (mobile ? 'ចុច Use' : 'ចុច E') : 'កាប់ចេក 🍌🔪 — ' + (mobile ? 'ចុច Use' : 'ចុច E'); return; }
+  if (nw && !nf) $('prompt').textContent = '👗 ទូខោអាវ — ' + (mobile ? 'ចុច Use' : 'ចុច E') + ' ដើម្បីបើក'; else if (nf) $('prompt').textContent = `Press E to ${fridge.open ? 'Close' : 'Open'} Fridge 🧊`; else if (nd) $('prompt').textContent = `Press E to ${nd.open ? 'Close' : 'Open'} Door`;
 }
 function loop() {
   requestAnimationFrame(loop);

@@ -1,7 +1,10 @@
 // npc.js — playable / autonomous characters ("girl" Mina, "boy" Dara).
 // A character is either controlled by the player (hidden, first-person camera) or driven by AI:
 // walks room to room, goes outside and back in, opens/closes doors, climbs stairs, idles, repeats.
-export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, kind = 'girl', name = 'Mina', start = 'HC', spots = [], look = {}, at = null, avoid = null }) {
+import { createGlbRig } from './glbrig.js';
+
+// glb (optional): { scene, height } — a Mixamo-rigged 3D model that replaces the built-in body (used for Ny Ny and G1 G1).
+export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, kind = 'girl', name = 'Mina', start = 'HC', spots = [], look = {}, at = null, avoid = null, glb = null }) {
 
   /* ================= WAYPOINT GRAPH [x, z, floorY] ================= */
   const N = {
@@ -169,9 +172,21 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
     return { g, body, legL, legR, armL, armR, head, tagY: 2.05, hipH: .86 };
   }
 
-  const { g, body, legL, legR, armL, armR, head, tagY, hipH } = kind === 'boy' ? buildBoy() : buildGirl();
+  const built = kind === 'boy' ? buildBoy() : buildGirl();
+  const { g, body, legL, legR, armL, armR, head } = built;
+  let { tagY, hipH } = built;
   g.rotation.order = 'YXZ'; scene.add(g);
   const armZ0 = [armL.rotation.z, armR.rotation.z];
+
+  /* ---- optional 3D model: the built-in body stays as an invisible "puppet" that all animations drive; the real skeleton copies it ---- */
+  let rig = null;
+  if (glb) {
+    try {
+      rig = createGlbRig(THREE, glb.scene, { height: glb.height || 1.7 });
+      const old = []; body.traverse(o => { if (o.isMesh) old.push(o); }); old.forEach(o => o.removeFromParent());   // drop the box/cylinder body
+      body.add(rig.root); hipH = rig.hipH; tagY = rig.height + .26;
+    } catch (e) { console.warn('3D model not usable, keeping the built-in body', e); rig = null; }
+  }
 
   // name tag
   const tagC = document.createElement('canvas'); tagC.width = 320; tagC.height = 80;
@@ -214,7 +229,7 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
     startSeg(); state = 'walk'; setTag('Going to ' + label); cur = to; dest = label;
   }
 
-  function update(dt) {
+  function updateBody(dt) {
     if (state === 'player' || disposed) return;
     t += dt;
     for (let i = closeList.length - 1; i >= 0; i--) { // close doors behind us (only if the player isn't standing there)
@@ -303,7 +318,7 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
       head.rotation.y = barBusy ? 0 : Math.sin(t * .6) * .3;
       if (barBusy) { armL.rotation.x = -.7 + Math.sin(t * 5) * .25; armR.rotation.x = -.7 + Math.cos(t * 4) * .25; }
     }
-    if (cup && cup.visible) armR.rotation.x = -1.0 - (drinking && sWait > 0 ? Math.max(0, Math.sin(t * 1.6)) * .5 : 0); // hold / sip the coffee
+    if (cup && cup.visible) { const sb = drinking && sWait > 0 ? Math.max(0, Math.sin(t * 1.6)) : 0; if (rig) mouth(sb); else armR.rotation.x = -1.0 - sb * .5; } // hold / sip the coffee
     if (playP) { const a = playP.a, sv = playP.s; body.rotation.x = .38 * a; head.rotation.x = .3 * a; armL.rotation.x = -1.2 * a; armL.userData.el.rotation.x = -.18 * a; armR.rotation.x = -.35 * a; armR.userData.el.rotation.x = a * (-1.43 + .25 * sv); }  // playing pool
     if (avoid && pos.y < .8 && (state === 'idle' || state === 'walk' || state === 'follow' || state === 'talk' || state === 'script' || state === 'work')) {   // walk around parked vehicles instead of into them
       const hx = Math.sin(ang), hz = Math.cos(ang);
@@ -321,11 +336,17 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
   }
 
   /* ---- sit / sleep actions ---- */
-  const drop = hipH - .47, legs = [legL, legR], shins = [legL.userData.shin, legR.userData.shin];
+  const drop = hipH - (rig ? .54 : .47), legs = [legL, legR], shins = [legL.userData.shin, legR.userData.shin];
   function resetPose() {
     body.position.y = 0; g.rotation.x = 0; legs.forEach(l => l.rotation.x = 0); shins.forEach(s => s.rotation.x = 0);
-    armL.rotation.x = armR.rotation.x = 0; armL.userData.el.rotation.x = armR.userData.el.rotation.x = 0; armL.rotation.z = armZ0[0]; armR.rotation.z = armZ0[1];
-    body.rotation.x = 0; head.rotation.z = 0; head.rotation.x = 0; sf = 0;
+    armL.rotation.x = armR.rotation.x = 0; armL.userData.el.rotation.x = armR.userData.el.rotation.x = 0; armL.rotation.z = armZ0[0]; armR.rotation.z = armZ0[1]; armL.rotation.y = armR.rotation.y = 0;
+    body.rotation.x = 0; head.rotation.z = 0; head.rotation.x = 0; sf = 0; bikeGrip = false; bikeTilt = 0; bikeAbd = 0;
+  }
+  let bikeGrip = false, bikeTilt = 0, bikeAbd = 0;
+  function dreamRide() {   // riding the Honda Dream: hips on the rear of the seat, thighs forward, feet on the footrests, back leaning, arms reaching the grips
+    legs.forEach(l => l.rotation.x = -1.1); shins.forEach(s => s.rotation.x = 1.26);                 // thighs nearly level, shins hanging down to the footrests
+    armL.rotation.x = armR.rotation.x = -1.05; armL.userData.el.rotation.x = armR.userData.el.rotation.x = -.85;   // slightly bent elbows, hands on the grips
+    body.rotation.x = 0; bikeTilt = .7; bikeAbd = .3; head.rotation.x = -.5; bikeGrip = true;
   }
   function pose(e, s = act) {
     if (s.type === 'sleep') { g.rotation.x = -Math.PI / 2 * e; return; } // lie on back
@@ -349,11 +370,11 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
     } else { seatT -= dt; if (seatT <= 0) { leave(); return; } pose(1); if (s.pc) typing(); }
     let df = fa - ang; df = Math.atan2(Math.sin(df), Math.cos(df)); ang += df * Math.min(1, dt * 10);
     head.rotation.y = 0; g.position.set(pos.x, pos.y, pos.z); g.rotation.y = ang;
-    if (cup && cup.visible && !sleep) armR.rotation.x = -1.0 - (state === 'seated' ? Math.max(0, Math.sin(t * 1.6)) * .5 : 0); // sip while seated
+    if (cup && cup.visible && !sleep) { const sipB = state === 'seated' ? Math.max(0, Math.sin(t * 1.6)) : 0; if (rig) mouth(sipB); else armR.rotation.x = -1.0 - sipB * .5; } // sip while seated
     Object.assign(col, { x0: pos.x - .25, x1: pos.x + .25, z0: pos.z - .25, z1: pos.z + .25, y0: pos.y, y1: pos.y + 1.7 });
   }
 
-  function drive(dt, d) { // animate this body while the human controls it (only visible in third-person view)
+  function driveBody(dt, d) { // animate this body while the human controls it (only visible in third-person view)
     if (state !== 'player') return;
     t += dt;
     if (fresh) { ang = d.yaw + Math.PI; fresh = false; }
@@ -362,7 +383,7 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
     drvSeat = s; drvHug = !!d.hug; drvSwim = !!d.swim;
     if (d.hug) {
       let df = d.hug.ang - ang; df = Math.atan2(Math.sin(df), Math.cos(df)); ang += df * Math.min(1, dt * 8);
-      sf = 0; legL.rotation.x = legR.rotation.x = 0; hugPose(d.hug.e); head.rotation.y = 0; g.position.set(d.x, d.y, d.z);
+      sf = 0; legL.rotation.x = legR.rotation.x = 0; hugPose(d.hug.e); g.position.set(d.x, d.y, d.z);
     } else if (s) {
       const sleep = s.type === 'sleep';
       g.position.set(sleep ? s.px - s.hd * .8 : s.x, sleep ? s.y + .17 : s.by, sleep ? s.pz : s.z);
@@ -370,8 +391,8 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
       let df = fa - ang; df = Math.atan2(Math.sin(df), Math.cos(df)); ang += df * Math.min(1, dt * 10);
       pose(1, s); head.rotation.y = 0;
       if (s.pc) typing();
-      if (s.bike) { armL.rotation.x = armR.rotation.x = -1.2; body.rotation.x = .12; }   // hands on the handlebar
-      if (d.eating) { const bite = Math.max(0, Math.sin(t * 3.2)); armR.rotation.x = -1.3 - bite * .9; head.rotation.x = bite * .15; }   // spoon to the mouth
+      if (s.bike) { if (s.dream) dreamRide(); else { armL.rotation.x = armR.rotation.x = -1.2; body.rotation.x = .12; } }   // hands on the handlebar
+      if (d.eating) { const bite = Math.max(0, Math.sin(t * 3.2)); if (rig) mouth(bite); else armR.rotation.x = -1.3 - bite * .9; head.rotation.x = bite * .15; }   // spoon to the mouth
     } else if (d.swim) {                                  // swimming: lie flat on the water and paddle
       const sp = Math.hypot(d.vx, d.vz); sf += ((sp > .3 ? 1 : .35) - sf) * Math.min(1, dt * 6); phase += sf * dt * 6;
       g.rotation.x = 1.4; body.position.y = 0; head.rotation.y = 0;
@@ -388,9 +409,33 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
       if (sp > .3) { let df = Math.atan2(d.vx, d.vz) - ang; df = Math.atan2(Math.sin(df), Math.cos(df)); ang += df * Math.min(1, dt * 10); }
       g.position.set(d.x, d.y, d.z);
     }
-    if (cup && cup.visible && !d.hug && !d.swim && !s) armR.rotation.x = -1.0;   // holding something: keep the arm raised
+    if (cup && cup.visible && !d.hug && !d.swim && !s) { if (rig) mouth(0); else armR.rotation.x = -1.0; }   // holding something: keep the arm raised
+    if (cradle && !d.hug && !d.swim && !s) cradlePose();   // carrying the baby
     if (phoneUp && !d.hug && !d.swim && !s) { armL.rotation.x = -.7; armL.userData.el.rotation.x = -1.5; armL.rotation.z = armZ0[0] + .35; head.rotation.x = .2; }   // looking at the phone
     g.rotation.y = ang;
+  }
+
+  /* ---- 3D model driver ---- */
+  const rigSt = { dt: 0, t: 0, sf: 0, run: 0, swim: false, legs: [legL, legR], arms: [armL, armR], head, grip: [false, false] };
+  let runT = 0, runS = 0;
+  const mouth = b => { armR.rotation.x = -.7 - .45 * b; armR.rotation.y = -.15 - .65 * b; armR.userData.el.rotation.x = -1.6 - .6 * b; };   // right hand lifts the spoon / cup to the mouth
+  function rigNeutral() { armL.rotation.y = armR.rotation.y = 0; if (!phoneUp) armL.userData.el.rotation.x = 0; armR.userData.el.rotation.x = 0; }
+  function rigApply(dt) {
+    if (!rig || !g.visible || disposed) return;
+    runS += (runT - runS) * Math.min(1, dt * 5);
+    rigSt.tilt = bikeTilt; rigSt.abd = bikeAbd; rigSt.armOut = bikeAbd ? .15 : 0; rigSt.dt = dt; rigSt.t = t; rigSt.sf = sf; rigSt.run = runS; rigSt.swim = drvSwim;
+    rigSt.grip[0] = bikeGrip || !!phoneUp || !!(cueM && cueM.visible); rigSt.grip[1] = bikeGrip || !!(cup && cup.visible) || !!(cueM && cueM.visible);
+    rig.apply(rigSt);
+  }
+  function update(dt) {
+    if (rig && state !== 'player' && !disposed) rigNeutral();
+    updateBody(dt);
+    if (rig && state !== 'player') { runT = sf > .2 ? Math.max(0, Math.min(1, (spd - 2.6) / 2.4)) : 0; rigApply(dt); }
+  }
+  function drive(dt, d) {
+    if (rig && state === 'player') rigNeutral();
+    driveBody(dt, d);
+    if (rig && state === 'player') { const sp = Math.hypot(d.vx, d.vz); runT = !d.swim && !d.seat && !d.hug && sp > 4.6 ? Math.min(1, (sp - 4.6) / 1.9) : 0; rigApply(dt); }
   }
 
   /* ---- coffee cup + clean-up (customers) ---- */
@@ -399,7 +444,7 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
       cup = new THREE.Group();
       part(cup, new THREE.CylinderGeometry(.035, .028, .09, 10), new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: .6 }), 0, 0, 0);
       part(cup, new THREE.CylinderGeometry(.038, .038, .015, 10), mat(0x4a2c1a, .5), 0, .05, 0);
-      cup.position.set(0, -.56, .07); cup.rotation.x = 1.0; armR.add(cup);
+      if (rig) { cup.position.set(0, -.09, .05); cup.rotation.x = 2.3; rig.anchors[1].add(cup); } else { cup.position.set(0, -.56, .07); cup.rotation.x = 1.0; armR.add(cup); }
     }
     cup.visible = on;
   }
@@ -415,21 +460,31 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
       phoneM = new THREE.Group();
       const b = new THREE.Mesh(new THREE.BoxGeometry(.075, .15, .012), mat(0x15171c, .3)); phoneM.add(b);
       const sc = new THREE.Mesh(new THREE.PlaneGeometry(.065, .135), new THREE.MeshBasicMaterial({ color: 0x7cc8ff })); sc.position.z = -.0066; sc.rotation.y = Math.PI; phoneM.add(sc);
-      phoneM.position.set(0, -.34, .09); phoneM.rotation.x = 2.0; armL.userData.el.add(phoneM);   // counter-rotated so the phone stands upright, screen toward the face
+      phoneM.rotation.x = 2.0; if (rig) { phoneM.position.set(0, -.1, .07); rig.anchors[0].add(phoneM); } else { phoneM.position.set(0, -.34, .09); armL.userData.el.add(phoneM); }   // counter-rotated so the phone stands upright, screen toward the face
     }
     if (phoneM) phoneM.visible = on;
     phoneUp = on; if (!on) { armL.userData.el.rotation.x = 0; armL.rotation.z = armZ0[0]; head.rotation.x = 0; }
   }
   function setTool(on) {   // pool cue held in the right hand
-    if (!cueM) { cueM = new THREE.Mesh(new THREE.CylinderGeometry(.008, .014, 1.45, 8), mat(0xd9b382, .4)); cueM.position.set(0, -.885 - armR.userData.ey, .03); armR.userData.el.add(cueM); }
+    if (!cueM) { cueM = new THREE.Mesh(new THREE.CylinderGeometry(.008, .014, 1.45, 8), mat(0xd9b382, .4)); cueM.position.set(0, -.885 - armR.userData.ey + (rig ? .27 : 0), .03); (rig ? rig.anchors[1] : armR.userData.el).add(cueM); }
     cueM.visible = on; if (!on) { playP = null; resetPose(); }
   }
   function play(a, sv) { playP = { a, s: sv || 0 }; }
   function startSit(p) { act = p.sit; act.taken = name; actDur = p.dur ?? null; actTag = p.tag ?? null; inScript = true; state = 'enter'; enterT = 0; ox = pos.x; oz = pos.z; oy = pos.y; setTag('Sitting down'); }
+  function setOutfit(g2) {   // swap the 3D body for another rigged model (different clothes); held items move to the new hands
+    if (!rig || !g2) return false;
+    let nr; try { nr = createGlbRig(THREE, g2.scene, { height: g2.height || 1.7 }); } catch (e) { console.warn('outfit not usable', e); return false; }
+    rig.root.removeFromParent(); body.add(nr.root); rig = nr; hipH = nr.hipH;
+    if (cup) { cup.removeFromParent(); rig.anchors[1].add(cup); }
+    if (phoneM) { phoneM.removeFromParent(); rig.anchors[0].add(phoneM); }
+    if (cueM) { cueM.removeFromParent(); rig.anchors[1].add(cueM); }
+    return true;
+  }
   function setHold(obj) { // carry an object (e.g. a bowl) in the right hand
-    if (cup) armR.remove(cup);
+    if (cup) cup.removeFromParent();
     cup = obj || null;
-    if (cup) { cup.position.set(0, -.56, .07); cup.rotation.x = 1.0; cup.visible = true; armR.add(cup); } else armR.rotation.x = 0;
+    if (cup) { if (rig) { cup.position.set(0, -.09, .05); cup.rotation.x = 2.3; rig.anchors[1].add(cup); } else { cup.position.set(0, -.56, .07); cup.rotation.x = 1.0; armR.add(cup); } cup.visible = true; }
+    else { armR.rotation.x = 0; if (rig) { armR.rotation.y = 0; armR.userData.el.rotation.x = 0; } }
   }
   function goEat(spot, dur, cb, spoon) { // a following character walks to a chair, sits and eats, then goes back to following
     if (state !== 'follow') return false;
@@ -458,10 +513,33 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
   function dispose() { disposed = true; scene.remove(g); const i = cols.indexOf(col); if (i >= 0) cols.splice(i, 1); }
 
   /* ---- hug (both characters play this pose for a few seconds) ---- */
-  function hugPose(e) { // arms wrap around the partner, bodies lean in, heads tilt
-    armL.rotation.x = armR.rotation.x = -1.15 * e;                      // upper arms forward
-    armL.userData.el.rotation.x = armR.userData.el.rotation.x = -.65 * e;   // elbows bent so the forearms wrap round the partner's back
-    armL.rotation.z = armZ0[0] + .32 * e; armR.rotation.z = armZ0[1] - .32 * e;   // swung inward: the hands meet behind the partner
+  const _hV1 = new THREE.Vector3(), _hV2 = new THREE.Vector3(), _hU = new THREE.Vector3(), _hF = new THREE.Vector3(), _hZ = new THREE.Vector3(), _hN = new THREE.Vector3(), _hQ = new THREE.Quaternion(), _hQ0 = new THREE.Quaternion(), _hD = new THREE.Vector3(0, -1, 0), _hI = new THREE.Quaternion();
+  function aimArm(arm, U, F, e) {   // point the upper arm along U and the forearm along F (body frame), blended by e
+    _hU.copy(U).normalize(); _hF.copy(F).normalize();
+    _hQ0.setFromUnitVectors(_hD, _hU);
+    _hZ.set(0, 0, 1).applyQuaternion(_hQ0);                                    // the elbow bends toward this local direction ...
+    _hN.copy(_hF).addScaledVector(_hU, -_hF.dot(_hU)).normalize();             // ... so twist the arm until it points at the forearm's side
+    const phi = Math.atan2(_hZ.clone().cross(_hN).dot(_hU), _hZ.dot(_hN));
+    _hQ.setFromAxisAngle(_hU, phi).multiply(_hQ0);
+    arm.quaternion.copy(_hI.identity()).slerp(_hQ, e);
+    arm.userData.el.rotation.x = -Math.acos(Math.max(-1, Math.min(1, _hU.dot(_hF)))) * e;
+  }
+  function hugArm(arm, inw, e) {   // aim the upper arm out past the partner's side, then fold the forearm in across their back (hands end up behind the partner)
+    const hy = kind === 'boy' ? -.22 : -.06;                                   // the taller one reaches down onto the partner's back
+    aimArm(arm, _hV1.set(-inw * .45, hy, .88), _hV2.set(inw * .74, hy - .1, .67), e);
+  }
+  let cradle = false;
+  function cradlePose() {   // carrying the baby: both forearms form a flat cradle in front of the chest, elbows close to the body, head slightly bowed to the baby
+    if (!rig) { armL.rotation.x = armR.rotation.x = -1.0; armL.userData.el.rotation.x = armR.userData.el.rotation.x = -1.1; return; }
+    aimArm(armL, _hV1.set(-.1, -.8, .42), _hV2.set(.3, .08, .9), 1);
+    aimArm(armR, _hV1.set(.1, -.8, .42), _hV2.set(-.3, .08, .9), 1);
+    head.rotation.x = .22;
+  }
+  function hugPose(e) { // arms wrap around the partner, bodies lean in, heads turn and rest cheek to cheek
+    if (rig) { hugArm(armL, 1, e); hugArm(armR, -1, e); body.rotation.x = .08 * e; head.rotation.y = .5 * e; head.rotation.z = .1 * e; head.rotation.x = (kind === 'boy' ? .22 : -.04) * e; return; }
+    armL.rotation.x = armR.rotation.x = -1.15 * e;
+    armL.userData.el.rotation.x = armR.userData.el.rotation.x = -.65 * e;
+    armL.rotation.z = armZ0[0] + .32 * e; armR.rotation.z = armZ0[1] - .32 * e;
     body.rotation.x = .1 * e; head.rotation.z = .12 * e; head.rotation.x = .08 * e;
   }
   function hug(tx, tz, face, dur) { // called when the player presses "hug": step in close and embrace
@@ -474,7 +552,7 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
     const e = Math.max(0, Math.min(1, hugT / .6, (hugDur - hugT) / .4)), m = Math.min(1, hugT / .5);
     pos.x = hugFrom.x + (hugTo.x - hugFrom.x) * m; pos.z = hugFrom.z + (hugTo.z - hugFrom.z) * m;
     let df = hugFace - ang; df = Math.atan2(Math.sin(df), Math.cos(df)); ang += df * Math.min(1, dt * 8);
-    sf = 0; legL.rotation.x = legR.rotation.x = 0; hugPose(e); head.rotation.y = 0;
+    sf = 0; legL.rotation.x = legR.rotation.x = 0; hugPose(e);
     g.position.set(pos.x, pos.y, pos.z); g.rotation.y = ang;
     Object.assign(col, { x0: pos.x - .25, x1: pos.x + .25, z0: pos.z - .25, z1: pos.z + .25, y0: pos.y, y1: pos.y + 1.7 });
     if (hugT >= hugDur) {
@@ -496,7 +574,7 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
   }
   function rideStep() { // sit in the passenger seat of the player's car (or at the wheel when we drive it ourselves)
     const c = rideCar, sn = Math.sin(c.h), cs = Math.cos(c.h);
-    if (c.bike) { const bz = rideDrv ? .3 : .72; pos.x = c.x - sn * bz; pos.z = c.z - cs * bz; pos.y = .28; ang = c.h; pose(1, { type: 'sit' }); head.rotation.y = 0; armL.rotation.x = armR.rotation.x = rideDrv ? -1.2 : -.9; body.rotation.x = .08; g.position.set(pos.x, pos.y, pos.z); g.rotation.y = ang; return; }   // pillion on the motorbike
+    if (c.bike) { const bz = rideDrv ? (c.seatZ ?? .3) : (c.seatZ ? c.seatZ + .4 : .72); pos.x = c.x - sn * bz; pos.z = c.z - cs * bz; pos.y = c.seatBy ?? .28; ang = c.h; pose(1, { type: 'sit' }); head.rotation.y = 0; armL.rotation.x = armR.rotation.x = rideDrv ? -1.2 : -.9; body.rotation.x = .08; if (c.dream && rideDrv) dreamRide(); g.position.set(pos.x, pos.y, pos.z); g.rotation.y = ang; return; }   // pillion on the motorbike
     const sd = rideDrv ? -1 : 1;
     pos.x = c.x - sd * cs * .4 - sn * .35; pos.z = c.z + sd * sn * .4 - cs * .35; pos.y = .15; ang = c.h;
     pose(1, { type: 'sit' }); head.rotation.y = 0; if (rideDrv) armL.rotation.x = armR.rotation.x = -1.2;
@@ -540,5 +618,5 @@ export function createCharacter({ THREE, scene, doors, cols, player, FL, STEP, k
   }
 
   setTag('Just arrived'); g.position.set(pos.x, pos.y, pos.z);
-  return { update, drive, control, release, getPose, name, group: g, mode: () => state, talk, follow, resume, board, alight, hug, setCup, setTool, setPhone, goTo, boardDrive, play, walkTo: (x, z) => { wTo = { x, z }; }, walking: () => !!wTo, setFace: a => { faceO = a; }, setHold, goEat, dispose, work, setBusy: v => { barBusy = v; }, script: (pts, cb) => { script = pts; si = 0; sWait = 0; sDone = cb; state = 'script'; } };
+  return { setCradle: v => { cradle = !!v; if (!cradle) { head.rotation.x = 0; armL.rotation.set(0, 0, armZ0[0]); armR.rotation.set(0, 0, armZ0[1]); armL.userData.el.rotation.x = armR.userData.el.rotation.x = 0; } }, update, drive, control, release, getPose, name, group: g, mode: () => state, talk, follow, resume, board, alight, hug, setCup, setTool, setPhone, goTo, boardDrive, play, walkTo: (x, z) => { wTo = { x, z }; }, walking: () => !!wTo, setFace: a => { faceO = a; }, setHold, setOutfit, goEat, dispose, work, setBusy: v => { barBusy = v; }, script: (pts, cb) => { script = pts; si = 0; sWait = 0; sDone = cb; state = 'script'; } };
 }
